@@ -1,0 +1,89 @@
+# ============================================================
+#  UNO Plugin Configuration
+# ============================================================
+
+# ---- Resource Pack ----
+resource-pack:
+  # Which texture pack is active. "default" uses the built-in scaffold
+  # you fill with your Aseprite art (see resourcepack/NAMING_GUIDE.md).
+  active-pack: default
+
+  # How the pack reaches players:
+  #   embedded = plugin hosts the zip on its own built-in HTTP server (recommended)
+  #   url      = you host the zip yourself and provide the link below
+  serve-mode: embedded
+
+  # Used when serve-mode: embedded
+  embedded:
+    # Public address players can reach (usually your server's IP/host).
+    # "auto" uses the server's configured IP.
+    host: auto
+    port: 8765
+
+  # Used when serve-mode: url
+  url:
+    link: ""
+    sha1: ""
+
+  # Require players to accept the pack before sitting at a table.
+  require: true
+
+  # Prompt shown when sending the pack.
+  prompt: "&eUNO needs this resource pack for card textures. Please accept!"
+
+# ---- Gameplay ----
+game:
+  # Seconds a player may stay disconnected before forfeiting (seat reserved).
+  reconnect-grace-seconds: 90
+
+  # Seconds before a turn is auto-skipped/auto-drawn for an idle player.
+  # 0 disables the turn timer.
+  turn-timeout-seconds: 0
+
+  # Cards dealt to each player at the start.
+  starting-hand-size: 7
+
+  # Penalty cards drawn for failing to call UNO in time.
+  uno-penalty-cards: 2
+
+  # Seconds after reaching 1 card in which a player must call UNO (left-click).
+  uno-call-window-seconds: 3
+
+# ---- Gambling ("Let It Ride") ----
+# Players stake items by dropping them onto the table; the winner of the hand
+# takes the whole pot. Staked items are held in plugins/UNO/escrow.yml, so a
+# crash or restart returns them to whoever put them in.
+gambling:
+  enabled: true
+
+  # Seconds an ante may sit open before it expires and refunds everyone.
+  # 0 disables the timeout (a stalled bet then holds items until someone cancels).
+  ante-seconds: 300
+
+  ride:
+    # Offer the winner the choice to leave the pot in for another hand.
+    # Off = every hand simply pays out to the winner.
+    enabled: true
+
+    # Seconds the winner has to pick cash-out vs. ride (no answer = cash out).
+    window-seconds: 20
+
+    # Seconds the table then has to match the pot and challenge the rider.
+    # Nobody antes in time = the rider is paid out.
+    challenge-seconds: 90
+
+# ---- Tables ----
+tables:
+  casino:
+    min-players: 4
+    max-players: 6
+
+# ---- Fish Dealer ----
+dealer:
+  enabled: true        # Master toggle for the casino table dealer.
+  chat: true           # Show dialogue in chat.
+  titles: true         # Show dialogue as title/subtitle.
+  long-game-minutes: 10 # Minutes of play before the "long game" line triggers.
+
+# ---- Debug ----
+debug: false

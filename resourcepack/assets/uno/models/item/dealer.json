@@ -1,0 +1,21 @@
+{
+  "textures": {
+    "tex": "minecraft:item/fish/dealer",
+    "particle": "minecraft:item/fish/dealer"
+  },
+  "elements": [
+    {
+      "__comment": "Flat 16x32 panel (1x2 blocks), centred on x=8/z=8 so the ItemDisplay anchor at (8,8,8) sits under his middle. Front and back only — a rectangular rim around a fish-shaped sprite renders as a slab wherever the art is transparent. The back reuses the same UV, which mirrors it: the same fish seen from the other side.",
+      "from": [0, 0, 7.5],
+      "to": [16, 32, 8.5],
+      "faces": {
+        "south": { "uv": [0, 0, 16, 16], "texture": "#tex" },
+        "north": { "uv": [0, 0, 16, 16], "texture": "#tex" }
+      }
+    }
+  ],
+  "display": {
+    "gui":   { "rotation": [0, 0, 0], "translation": [0, 0, 0], "scale": [1, 1, 1] },
+    "fixed": { "rotation": [0, 0, 0], "translation": [0, 0, 0], "scale": [1, 1, 1] }
+  }
+}

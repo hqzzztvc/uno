@@ -1,0 +1,29 @@
+name: UNO
+version: 1.0
+main: com.unoplugin.UnoPlugin
+api-version: '1.21'
+description: A fully playable multiplayer UNO card game with tables, a fish dealer, and immersive controls.
+author: ankur
+folia-supported: false
+
+commands:
+  uno:
+    description: UNO game & table commands.
+    usage: /uno <start|play|gamble|give table|remove|reload|version>
+    permission: uno.play
+  gamble:
+    description: Wager items on a hand of UNO — winner takes the pot.
+    usage: /gamble [ready|out|pot|go|cancel]
+    aliases: [letitride, ante, bet]
+    permission: uno.gamble
+
+permissions:
+  uno.admin:
+    description: Access to UNO admin commands (give tables, reload pack).
+    default: op
+  uno.play:
+    description: Allows a player to sit and play at UNO tables.
+    default: true
+  uno.gamble:
+    description: Allows a player to stake items on a hand of UNO.
+    default: true

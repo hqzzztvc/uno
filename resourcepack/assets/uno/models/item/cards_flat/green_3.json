@@ -1,0 +1,41 @@
+{
+ "textures": {
+  "front": "minecraft:item/cards/green_3",
+  "back": "minecraft:item/cards/back",
+  "particle": "minecraft:item/cards/green_3"
+ },
+ "elements": [
+  {
+   "from": [
+    3,
+    7.85,
+    0.5
+   ],
+   "to": [
+    13,
+    8.15,
+    15.5
+   ],
+   "faces": {
+    "up": {
+     "uv": [
+      0,
+      0,
+      16,
+      16
+     ],
+     "texture": "#front"
+    },
+    "down": {
+     "uv": [
+      0,
+      0,
+      16,
+      16
+     ],
+     "texture": "#back"
+    }
+   }
+  }
+ ]
+}
