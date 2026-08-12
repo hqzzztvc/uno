@@ -489,8 +489,14 @@ public final class BetManager implements Listener, GameManager.GameListener {
         s.cancelTimer();
         // The pot is his now — re-file every item under the winner so a crash pays him, and
         // so anyone who wants a piece has to put fresh items in.
+        //
+        // Read the old stakers BEFORE re-filing: reattributeTo collapses `stakes` down to the
+        // rider alone, so asking afterwards returns only him and the losers' escrow files are
+        // never released. They would keep holding items that are now ALSO held under the
+        // rider — and the next relog hands those back, minting them out of nothing.
+        List<UUID> previous = new ArrayList<>(s.stakers());
         s.reattributeTo(p.getUniqueId());
-        for (UUID staker : new ArrayList<>(s.stakers())) {
+        for (UUID staker : previous) {
             if (!staker.equals(p.getUniqueId())) {
                 escrow.release(staker);
             }
@@ -548,9 +554,18 @@ public final class BetManager implements Listener, GameManager.GameListener {
         payout(s, rider);
     }
 
+    /**
+     * Take the pot instead of riding it.
+     *
+     * <p>Only valid while the offer is actually open. {@code rideWinner} stays set through the
+     * whole challenge window — and {@code ride()} puts the state back to ANTE — so checking it
+     * alone let the rider cash out <em>after</em> a challenger had matched, walking off with
+     * their fresh stake without a card being played.
+     */
     private void cash(Player p) {
         BetSession s = sessionAt(p);
-        if (s == null || s.rideWinner() == null || !p.getUniqueId().equals(s.rideWinner())) {
+        if (s == null || s.state() != BetSession.State.RIDE
+                || !p.getUniqueId().equals(s.rideWinner())) {
             messages.send(p, "bet.nothing-to-cash");
             return;
         }
@@ -689,8 +704,16 @@ public final class BetManager implements Listener, GameManager.GameListener {
         for (BetSession s : new ArrayList<>(byTable.values())) {
             if (s.state() == BetSession.State.ANTE && s.isLive(id)) {
                 if (id.equals(s.rideWinner())) {
-                    // The rider left mid-challenge; the pot is already theirs on paper.
+                    // The rider left mid-challenge. The pot they won is already theirs on
+                    // paper, but anything a challenger staked to match them is NOT — no hand
+                    // was played for it. Hand that back before settling, or quitting at the
+                    // right moment is a way to take other people's items.
                     s.cancelTimer();
+                    for (UUID staker : new ArrayList<>(s.stakers())) {
+                        if (!staker.equals(id)) {
+                            refund(s, staker, "REFUND");
+                        }
+                    }
                     payout(s, id);
                     return;
                 }

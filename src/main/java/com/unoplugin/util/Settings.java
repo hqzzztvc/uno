@@ -184,7 +184,10 @@ public final class Settings {
             if (banned.isEmpty()) {
                 continue;
             }
-            if (material.equals(banned) || material.endsWith("_" + banned) || material.endsWith(banned)) {
+            // Whole words only. A bare endsWith would make blacklisting STONE also ban
+            // REDSTONE, BLACKSTONE and END_STONE — silent refusals on items the admin never
+            // listed. The underscore form still catches the intended DIAMOND -> *_DIAMOND.
+            if (material.equals(banned) || material.endsWith("_" + banned)) {
                 return "bet.blacklisted";
             }
         }

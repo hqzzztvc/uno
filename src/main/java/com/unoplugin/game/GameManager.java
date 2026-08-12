@@ -163,12 +163,14 @@ public final class GameManager implements Listener, HandManager.CardActions {
                 return null;
             }
         }
+        // Bail out BEFORE minting bots: newBot registers them in `bots`/`botNames` for good,
+        // so giving up afterwards leaks a UUID and a name on every abandoned attempt.
+        if (humans.size() + extraBots < 2) {
+            return null;
+        }
         List<UUID> players = new ArrayList<>(humans);
         for (int i = 1; i <= extraBots; i++) {
             players.add(newBot("Bot " + i));
-        }
-        if (players.size() < 2) {
-            return null;
         }
         return launch(players, table, anchor);
     }
@@ -312,7 +314,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
         updateBar(game);
         PileRenderer pile = piles.get(game.id());
         if (pile != null) {
-            pile.setDrawCount(game.drawPileSize()); // shrink/grow the deck stack
+            pile.setDrawCount(game.drawPileSize()); // step the deck block down a size
         }
         if (game.isOver()) {
             cancelTurnTimer(game.id());

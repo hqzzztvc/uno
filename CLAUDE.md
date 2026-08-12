@@ -77,15 +77,34 @@ only needs the keys they changed. Placeholder values are inserted unparsed, so a
 
 ## Regenerating pack assets
 
-Texture PNGs are authored by hand (Aseprite/Blockbench) and live under the **minecraft** namespace at
-`resourcepack/assets/minecraft/textures/item/cards/<card>.png`. Everything under `assets/uno/` is
-generated from those PNGs and should not be hand-edited:
+There are **two** hand-authored sources, and everything under `assets/uno/` is derived from them:
+
+- **art** — texture PNGs (Aseprite) under the **minecraft** namespace at
+  `resourcepack/assets/minecraft/textures/item/cards/<card>.png`.
+- **geometry** — Blockbench exports at `uno_json/<card>.json` (repo root). One upright card: a
+  rounded-corner slab 16 wide × 24 tall × 1 thick built from 17 boxes, card face on `north`,
+  `back.png` on `south`, white rims. `uno_json/deck_{10,50,100}.json` are the same slab thickened
+  to 1/5/10 units and stand in for the draw pile.
+
+Neither `assets/uno/` nor the pack's `sides.png` is hand-edited — regenerate instead:
 
 ```bash
 cd resourcepack
-./generate_card_models.sh   # upright 2-sided card models + uno:<card> item defs (one per PNG)
-python3 generate_held_fan.py  # the ~6800-file uno:held composite fan (assets/uno/models/item/held/)
+python3 generate_card_models.py   # all 4 card families from uno_json/ + uno:<card> item defs
+python3 generate_held_fan.py      # the ~6800-file uno:held composite fan (models/item/held/)
 ```
+
+- `generate_card_models.py` **bakes the rotations into the geometry** rather than rotating at
+  render time (see the PileRenderer note below), which means rewriting every face's UV as it
+  moves to a new direction. `FRAME` is the table of per-direction (u, v) axes that makes that
+  correct; `remap_uv` handles axis flips exactly and falls back to a face `rotation` when the
+  axes swap — which in this pack only ever happens on the uniform white rims.
+- The Blockbench exports reference a texture called `sides` that was never saved, and the deck
+  exports carry a leftover `wild_draw4` on their face. The generator resolves both: rims point at
+  the generated `item/cards/sides.png`, and a deck shows `back.png` on top and bottom.
+- Run `generate_card_models.py` **before** `generate_held_fan.py` — the fan's 6800 files are
+  `parent` references to `assets/uno/models/item/cards_held/`, not copies of the geometry.
+  Inlining a 17-box card 6800 times is a pack the client chokes on baking.
 
 - `generate_held_fan.py` **reads `MAX_SLOTS` and `DENSITIES` out of `HandManager.java`** (see
   `java_constants()`) — the Java file is the single source of truth and the two can no longer drift.
@@ -101,20 +120,23 @@ python3 generate_held_fan.py  # the ~6800-file uno:held composite fan (assets/un
   business on a live server.
 - `generate_card_font.py` is **dead code** — an abandoned HUD-font approach. Its outputs
   (`assets/uno/font/`, `assets/uno/textures/font/`) are not in the pack and `HandFont.java` was deleted.
-- The flat table-pile models (`assets/uno/models/item/cards_flat/`) have no checked-in generator; they
-  were produced ad hoc. Add new ones by copying an existing pair.
+- The fan strips the four rim faces from its copy of the card (`strip_rims`). They are 60 of the
+  card's 86 quads and sub-pixel at the 0.18 fan scale, and the fan bakes 6800+ models.
 - `cards_textures_backup/` at the repo root is a stale copy of the card art, not used by the build.
   It is **untracked and gitignored** — still on disk, no longer in the repo. Same for `.DS_Store`.
 
 ## Card naming is the universal ID
 
 `Card.name()` (`red_5`, `green_skip`, `wild_draw4`) is simultaneously the texture name, the item-model
-key, and the string passed around between subsystems. Every card exists in three model families:
+key, and the string passed around between subsystems. Every card exists in four model families,
+all generated from the one Blockbench export in `uno_json/`:
 
 | Key | Model | Used by |
 |---|---|---|
-| `uno:<card>` | upright, front + `back.png` reverse | `CardTester` debug fan (`debug: true` only) |
-| `uno:flat_<card>` / `uno:down_<card>` | lying flat, face-up / face-down | `PileRenderer` (table piles) |
+| `uno:<card>` | upright, face on +Z, bottom-centre at the origin | `CardTester` debug fan (`debug: true` only) |
+| `uno:flat_<card>` / `uno:down_<card>` | lying flat, face-up / face-down | `PileRenderer` (discard pile) |
+| `uno:deck_10` / `deck_50` / `deck_100` | the draw pile as one solid block of cards | `PileRenderer` (draw pile) |
+| *(no item)* `uno:item/cards_held/<card>` | upright, pivot on (8,8,8), rims stripped | parent of every `uno:held` slot model |
 | `uno:held` | one composite item, 21 select-slots | `HandManager` (the held fan) |
 
 The held fan is a *single* PAPER item whose `custom_model_data` **strings** drive the composite: slot
@@ -172,18 +194,27 @@ logical state is persisted:
 - `plugins/UNO/bets.log` — append-only audit trail (`BetLog`), written on a background thread and
   drained on disable. Evidence, not state; escrow is the source of truth.
 
-Card models are authored *already lying flat* precisely so `PileRenderer` can spawn them with **no
-rotation**; a render-time `rotateX` swings the card off its spawn point and drops it under the table.
-Don't "fix" the missing rotation. The felt surface height lives once, in `UnoTable.SURFACE_Y`.
+The `cards_flat` / `deck_*` models come out of the generator *already lying flat and centred on
+(8, 8, 8)* precisely so `PileRenderer` can spawn them with **no rotation**; a render-time `rotateX`
+swings the card off its spawn point and drops it under the table. Don't "fix" the missing rotation —
+change the baked rotation in `generate_card_models.py` instead. The felt surface height lives once,
+in `UnoTable.SURFACE_Y`.
+
+The draw pile is **one** `ItemDisplay` showing `deck_10` / `deck_50` / `deck_100`, picked from the
+remaining count, not a stack of card entities. The deck order is settled once when `Deck` is
+constructed and never re-derived, so a draw only shrinks a number — the pile just swaps its item
+when the count crosses 50 or 10. Three swaps a game, instead of an entity removal per draw.
 
 `TableManager` indexes tables by packed chunk coordinate (`byChunk`), because chunk load/unload is one
 of the hottest events on a busy server and scanning every table on each one is pure waste. Keep the
 index in step in `register()` / `remove()`.
 
-When the discard pile hits `DISCARD_MAX`, `PileRenderer` clears it and starts a fresh stack rather
-than teleporting the other nine cards down a step. The alternative costs ten entity moves to every
-nearby player on *every* card played; this costs ten removals once per ten plays, and the top card —
-the one that is the live game state — is always the visible one.
+The discard heap is a rolling window of the last `DISCARD_MAX` (5) plays: at capacity the bottom card
+leaves, the rest slide down a step and the new card lands on top, so the pile holds a steady height
+instead of blinking out and restarting. It does that **without spawning or removing anything** — the
+display freed from the bottom is the one that becomes the new top card, so a play costs five
+teleports and one item swap. Don't "optimise" it back into a clear-and-rebuild: watching the pile
+vanish every five plays is the bug that shape was hiding.
 
 ### Input ownership
 

@@ -1,6 +1,1 @@
-{
-  "model": {
-    "type": "minecraft:model",
-    "model": "uno:item/cards/back"
-  }
-}
+{"model":{"type":"minecraft:model","model":"uno:item/cards/back"}}

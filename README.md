@@ -186,17 +186,23 @@ src/main/java/com/unoplugin/
 
 src/test/java/com/unoplugin/game/   JUnit tests for the rules layer
 
+uno_json/                               the card geometry (hand-authored Blockbench exports)
+
 resourcepack/
   assets/minecraft/textures/item/cards/   the card art (hand-authored PNGs)
-  assets/uno/                             item + model definitions (mostly generated)
-  generate_card_models.sh                 upright card models, one per PNG
+  assets/uno/                             item + model definitions (all generated)
+  generate_card_models.py                 upright / flat / face-down / deck models + item defs
   generate_held_fan.py                    the composite held-fan models (~6800 files)
 ```
 
-Card art is authored by hand; everything under `assets/uno/` is generated from it by the scripts
-above and shouldn't be edited directly. `generate_held_fan.py` reads its slot count and fan density
-tiers straight out of `HandManager.java`, so the two can't drift apart — change them in the Java and
-re-run the generator.
+Two things are authored by hand: the card **art** in `assets/minecraft/textures/item/cards/`, and
+the card **geometry** in `uno_json/` — one Blockbench export per card, a rounded-corner slab with
+the face on one side and `back.png` on the other, plus `deck_10/50/100` for the draw pile.
+Everything under `assets/uno/` is generated from those two by the scripts above and shouldn't be
+edited directly. Run `generate_card_models.py` first; the fan parents the models it writes.
+
+`generate_held_fan.py` reads its slot count and fan density tiers straight out of
+`HandManager.java`, so the two can't drift apart — change them in the Java and re-run the generator.
 
 ## Contributing
 

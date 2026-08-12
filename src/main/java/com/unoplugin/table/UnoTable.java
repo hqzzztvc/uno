@@ -29,6 +29,14 @@ public abstract class UnoTable {
     protected final Location anchor;
     /** Facing, snapped to the nearest 90 degrees. Casino dealer sits at +forward. */
     protected final float yaw;
+    /**
+     * The anchor's world, captured by NAME at construction.
+     *
+     * <p>{@code anchor.getWorld()} goes null once that world is unloaded at runtime, so
+     * persistence must not depend on it: a table is only ever built while its world is up,
+     * and the name is what {@code tables.yml} stores anyway.
+     */
+    private final String worldName;
     protected final List<Location> seats = new ArrayList<>();
     /** Per-seat occupant (null = empty). Sized once seats are computed. */
     private final UUID[] occupants;
@@ -41,6 +49,7 @@ public abstract class UnoTable {
         this.id = id;
         this.anchor = anchor;
         this.yaw = yaw;
+        this.worldName = anchor.getWorld() == null ? null : anchor.getWorld().getName();
         computeSeats();
         this.occupants = new UUID[seats.size()];
     }
@@ -59,6 +68,9 @@ public abstract class UnoTable {
     public UUID id() { return id; }
 
     public Location anchor() { return anchor.clone(); }
+
+    /** Name of the world this table was built in — survives that world being unloaded. */
+    public String worldName() { return worldName; }
 
     public float yaw() { return yaw; }
 

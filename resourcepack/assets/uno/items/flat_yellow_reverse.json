@@ -1,6 +1,1 @@
-{
- "model": {
-  "type": "minecraft:model",
-  "model": "uno:item/cards_flat/yellow_reverse"
- }
-}
+{"model":{"type":"minecraft:model","model":"uno:item/cards_flat/yellow_reverse"}}

@@ -1,6 +1,7 @@
 {
   "pack": {
     "pack_format": 88,
+    "supported_formats": [46, 64],
     "min_format": 46,
     "max_format": 120,
     "description": "UNO — cards & table art"

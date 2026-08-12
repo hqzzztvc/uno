@@ -46,9 +46,11 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -95,6 +97,9 @@ public class TableManager implements Listener {
      * didn't exist in the API this was built against, so wool stands in for the look.
      */
     private static final Material SEAT_CUSHION = Material.RED_WOOL;
+
+    /** Half-width of a table's visuals in blocks: the dealer stands furthest out, at 2.4. */
+    private static final double FOOTPRINT = 2.4;
 
     /** Multiplier on the dealer's 1×2-block model. 1.0 → he stands 2 blocks tall. */
     private static final float DEALER_SCALE = 1.0f;
@@ -195,13 +200,14 @@ public class TableManager implements Listener {
         }
     }
 
-    /** Add to the registry, index it by chunk, and build it if its chunk is loaded. */
+    /** Add to the registry, index it by chunk, and build it if all its chunks are loaded. */
     private void register(UnoTable table) {
         tables.put(table.id(), table);
         indexChunk(table);
-        Location a = table.anchor();
-        World world = a.getWorld();
-        if (world != null && world.isChunkLoaded(a.getBlockX() >> 4, a.getBlockZ() >> 4)) {
+        // Every chunk, not just the anchor's: spawning into one that is still out would put
+        // the dealer somewhere that unloads him again. onChunkLoad picks the table up when
+        // the last of its chunks arrives.
+        if (fullyLoaded(table)) {
             spawnVisuals(table);
         }
     }
@@ -212,7 +218,9 @@ public class TableManager implements Listener {
             Location a = t.anchor();
             String base = "tables." + t.id();
             yml.set(base + ".type", t.type().name());
-            yml.set(base + ".world", a.getWorld().getName());
+            // The captured name, NOT a.getWorld() — that goes null the moment the world is
+            // unloaded at runtime, and an NPE here means tables.yml is never written at all.
+            yml.set(base + ".world", t.worldName());
             yml.set(base + ".x", a.getX());
             yml.set(base + ".y", a.getY());
             yml.set(base + ".z", a.getZ());
@@ -241,7 +249,13 @@ public class TableManager implements Listener {
 
     /** Eject seated players and despawn all visuals (called on plugin disable). */
     public void shutdown() {
-        for (Seated s : new ArrayList<>(seated.values())) {
+        // Drop the bookkeeping FIRST. Ejecting fires EntityDismountEvent synchronously, and if
+        // `seated` still matches, onDismount routes into leaveSeat — which schedules a task.
+        // The plugin is already disabled by now, so the scheduler rejects it and Bukkit logs a
+        // stack trace on every single shutdown that has someone sitting down.
+        List<Seated> riders = new ArrayList<>(seated.values());
+        seated.clear();
+        for (Seated s : riders) {
             Entity vehicle = Bukkit.getEntity(s.vehicleId());
             if (vehicle != null) {
                 vehicle.eject();
@@ -252,7 +266,6 @@ public class TableManager implements Listener {
                 t.clearOccupant(s.index());
             }
         }
-        seated.clear();
         for (UnoTable t : tables.values()) {
             despawnVisuals(t);
         }
@@ -275,7 +288,9 @@ public class TableManager implements Listener {
             return PlaceResult.WORLD_LIMIT;
         }
         for (UnoTable other : tables.values()) {
-            if (other.anchor().getWorld().equals(anchor.getWorld())
+            // World first: a table whose world was unloaded at runtime has a null one, and
+            // calling equals ON that is an NPE that takes the whole placement down.
+            if (anchor.getWorld().equals(other.anchor().getWorld())
                     && other.anchor().distanceSquared(anchor) < 16) {
                 return PlaceResult.TOO_CLOSE; // too close to an existing table
             }
@@ -305,8 +320,8 @@ public class TableManager implements Listener {
         UnoTable nearest = null;
         double best = radius * radius;
         for (UnoTable t : tables.values()) {
-            if (!t.anchor().getWorld().equals(player.getWorld())) {
-                continue;
+            if (!player.getWorld().equals(t.anchor().getWorld())) {
+                continue; // player's world is never null; a table in an unloaded world is
             }
             double d = t.anchor().distanceSquared(player.getLocation());
             if (d <= best) {
@@ -358,19 +373,64 @@ public class TableManager implements Listener {
         return chunkKey(loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
     }
 
+    /**
+     * Every chunk this table's visuals reach into, not just the one holding its anchor.
+     *
+     * <p>A table is wider than its anchor block: the dealer stands 2.4 blocks out, the stools
+     * 2.0, and the felt is 3×3. Anchor one near a chunk border and its entities straddle two
+     * or four chunks. Indexing only the anchor chunk meant a neighbouring chunk could unload
+     * and silently take the dealer with it (he never came back, because the table still
+     * counted as spawned), or the anchor chunk could cycle and spawn a <em>second</em> dealer
+     * on top of the first, who was alive and untracked in a chunk that never unloaded.
+     */
+    private static Set<Long> occupiedChunks(UnoTable table) {
+        Location a = table.anchor();
+        // Chunks the visuals REALLY reach, from the true extent rather than a rounded-up block
+        // count. Claiming a chunk the table doesn't touch means that chunk unloading tears the
+        // table down — and takes anyone sitting at it out of their seat — for no reason.
+        int minX = (int) Math.floor(a.getX() - FOOTPRINT) >> 4;
+        int maxX = (int) Math.floor(a.getX() + FOOTPRINT) >> 4;
+        int minZ = (int) Math.floor(a.getZ() - FOOTPRINT) >> 4;
+        int maxZ = (int) Math.floor(a.getZ() + FOOTPRINT) >> 4;
+        Set<Long> keys = new HashSet<>(4);
+        for (int cx = minX; cx <= maxX; cx++) {
+            for (int cz = minZ; cz <= maxZ; cz++) {
+                keys.add(chunkKey(cx, cz));
+            }
+        }
+        return keys;
+    }
+
     private void indexChunk(UnoTable table) {
-        byChunk.computeIfAbsent(chunkKey(table.anchor()), k -> new ArrayList<>()).add(table);
+        for (long key : occupiedChunks(table)) {
+            byChunk.computeIfAbsent(key, k -> new ArrayList<>()).add(table);
+        }
     }
 
     private void unindexChunk(UnoTable table) {
-        long key = chunkKey(table.anchor());
-        List<UnoTable> here = byChunk.get(key);
-        if (here != null) {
-            here.remove(table);
-            if (here.isEmpty()) {
-                byChunk.remove(key);
+        for (long key : occupiedChunks(table)) {
+            List<UnoTable> here = byChunk.get(key);
+            if (here != null) {
+                here.remove(table);
+                if (here.isEmpty()) {
+                    byChunk.remove(key);
+                }
             }
         }
+    }
+
+    /** True once every chunk the table reaches into is loaded — see {@link #occupiedChunks}. */
+    private boolean fullyLoaded(UnoTable table) {
+        World w = table.anchor().getWorld();
+        if (w == null) {
+            return false;
+        }
+        for (long key : occupiedChunks(table)) {
+            if (!w.isChunkLoaded((int) (key >> 32), (int) key)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // ----------------------------------------------------------------- visuals
@@ -383,6 +443,7 @@ public class TableManager implements Listener {
         if (w == null) {
             return;
         }
+        sweepOrphans(table, w);
         Location a = table.anchor();
         // Textured felt top (top surface ~0.75), held up by 4 legs.
         spawnTexturedSlab(table, w, a, "casino_table", 0.61);
@@ -491,8 +552,41 @@ public class TableManager implements Listener {
         table.entityIds().add(d.getUniqueId());
     }
 
+    /**
+     * Remove anything already standing here wearing this table's id.
+     *
+     * <p>{@code entityIds} only knows about visuals this run spawned, so it cannot clean up
+     * after a crash, a chunk that unloaded half a table, or a world that already has
+     * duplicates in it. The id in each entity's PDC is the durable record, so trust that
+     * instead: whatever is left over gets cleared before new visuals go down. Cheap, because
+     * it only runs when a table is actually being (re)built.
+     */
+    private void sweepOrphans(UnoTable table, World w) {
+        String id = table.id().toString();
+        double r = FOOTPRINT + 1.0;
+        for (Entity e : w.getNearbyEntities(table.anchor(), r, r, r)) {
+            if (!id.equals(e.getPersistentDataContainer().get(idKey, PersistentDataType.STRING))) {
+                continue;
+            }
+            // Seat mounts carry the table id too, but they belong to the seating lifecycle,
+            // not this one. Pulling a stool out from under someone who is sitting on it is
+            // never the right way to rebuild the furniture.
+            if (e.getPersistentDataContainer().has(vehicleKey, PersistentDataType.BYTE)
+                    && !e.getPassengers().isEmpty()) {
+                continue;
+            }
+            e.eject();
+            e.remove();
+        }
+    }
+
     private void despawnVisuals(UnoTable table) {
-        for (UUID eid : table.entityIds()) {
+        // Iterate a COPY: ejecting a seat mount fires EntityDismountEvent synchronously, which
+        // runs leaveSeat, which removes that mount's id from this very list. Iterating it live
+        // throws ConcurrentModificationException part-way through, so the clear() and
+        // setSpawned(false) below never run — the table is then stuck "spawned" forever with
+        // untracked displays standing in the world, which is the duplicate-dealer bug again.
+        for (UUID eid : new ArrayList<>(table.entityIds())) {
             Entity e = Bukkit.getEntity(eid);
             if (e != null) {
                 e.eject(); // a seat mount may still be carrying someone
@@ -571,7 +665,9 @@ public class TableManager implements Listener {
             return;
         }
         for (UnoTable t : here) {
-            if (!t.isSpawned() && event.getWorld().equals(t.anchor().getWorld())) {
+            // Wait for the LAST of the table's chunks: spawning while a neighbour is still
+            // out would drop half the visuals into a chunk that unloads them straight away.
+            if (!t.isSpawned() && event.getWorld().equals(t.anchor().getWorld()) && fullyLoaded(t)) {
                 spawnVisuals(t);
             }
         }
@@ -585,9 +681,10 @@ public class TableManager implements Listener {
         }
         for (UnoTable t : here) {
             if (t.isSpawned() && event.getWorld().equals(t.anchor().getWorld())) {
-                // Non-persistent entities unload with the chunk; reset so they respawn on reload.
-                t.entityIds().clear();
-                t.setSpawned(false);
+                // Non-persistent entities unload with the chunk, but only the ones IN it —
+                // anything the table put in a still-loaded neighbour has to be taken down by
+                // hand, or it survives untracked and the next respawn doubles it up.
+                despawnVisuals(t);
             }
         }
     }

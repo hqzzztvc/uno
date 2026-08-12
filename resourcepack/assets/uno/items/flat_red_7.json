@@ -1,6 +1,1 @@
-{
- "model": {
-  "type": "minecraft:model",
-  "model": "uno:item/cards_flat/red_7"
- }
-}
+{"model":{"type":"minecraft:model","model":"uno:item/cards_flat/red_7"}}
