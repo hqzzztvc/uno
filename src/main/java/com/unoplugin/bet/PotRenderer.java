@@ -55,7 +55,7 @@ public final class PotRenderer {
     }
 
     /** Redraw the heap for {@code items} and set the floating label. */
-    public void update(List<ItemStack> items, String label) {
+    public void update(List<ItemStack> items, Component label) {
         World w = centre.getWorld();
         if (w == null) {
             return;
@@ -85,7 +85,7 @@ public final class PotRenderer {
     }
 
     /** Change only the floating text (turn counter, ride prompt, …). */
-    public void setTally(String label) {
+    public void setTally(Component label) {
         World w = centre.getWorld();
         if (w == null) {
             return;
@@ -102,7 +102,7 @@ public final class PotRenderer {
                 d.getPersistentDataContainer().set(tag, PersistentDataType.BYTE, (byte) 1);
             });
         }
-        tally.text(Component.text(label));
+        tally.text(label);
     }
 
     public void remove() {

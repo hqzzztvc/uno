@@ -1,7 +1,9 @@
 name: UNO
 version: 1.0
 main: com.unoplugin.UnoPlugin
-api-version: '1.21'
+# Matches the paper-api the plugin is built against (see pom.xml). Declaring an older
+# version makes Paper apply legacy-material compatibility we neither need nor want.
+api-version: '26.2'
 description: A fully playable multiplayer UNO card game with tables, a fish dealer, and immersive controls.
 author: ankur
 folia-supported: false
@@ -9,17 +11,17 @@ folia-supported: false
 commands:
   uno:
     description: UNO game & table commands.
-    usage: /uno <start|play|gamble|give table|remove|reload|version>
+    usage: /uno <help|start|gamble|version>
     permission: uno.play
   gamble:
     description: Wager items on a hand of UNO — winner takes the pot.
-    usage: /gamble [ready|out|pot|go|cancel]
+    usage: /gamble [ready|out|pot|go|cancel|ride|cash]
     aliases: [letitride, ante, bet]
     permission: uno.gamble
 
 permissions:
   uno.admin:
-    description: Access to UNO admin commands (give tables, reload pack).
+    description: Access to UNO admin commands (tables, force-end, refunds, reload).
     default: op
   uno.play:
     description: Allows a player to sit and play at UNO tables.

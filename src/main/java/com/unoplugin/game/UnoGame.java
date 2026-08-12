@@ -1,23 +1,27 @@
 package com.unoplugin.game;
 
-import org.bukkit.Bukkit;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
 
 /**
- * One UNO game: hands, draw/discard piles, turn order & direction, the active colour,
+ * One UNO game: hands, draw/discard piles, turn order &amp; direction, the active colour,
  * and all the rules (legal-move checking, card effects, wild colour choice, win).
- * Pure logic — rendering, messaging and bots live in {@code GameManager}.
+ *
+ * <p>Pure logic — no Bukkit anywhere in this class, so it is directly unit-testable.
+ * Rendering, messaging, name resolution and bots live in {@code GameManager}.
  */
 public final class UnoGame {
 
-    private final UUID tableId;
+    /** Cards dealt to each player when the config doesn't say otherwise. */
+    public static final int DEFAULT_HAND_SIZE = 7;
+
+    private final UUID id;
     private final List<UUID> players;
     private final Map<UUID, List<Card>> hands = new HashMap<>();
     private final Deck deck = new Deck();
@@ -31,12 +35,14 @@ public final class UnoGame {
     private UUID pendingColorPlayer; // must choose a colour after playing a wild
     private Card pendingColorCard;
     private String lastEvent = "";
+    /** Bumped on every state change; lets a scheduled timeout tell "still the same turn". */
+    private int moves = 0;
 
-    /** Resolves a player UUID to a display name (GameManager overrides for bots). */
-    private Function<UUID, String> namer = UnoGame::bukkitName;
+    /** Resolves a player UUID to a display name (GameManager supplies the real one). */
+    private Function<UUID, String> namer = p -> p.toString().substring(0, 8);
 
-    public UnoGame(UUID tableId, List<UUID> players) {
-        this.tableId = tableId;
+    public UnoGame(UUID id, List<UUID> players) {
+        this.id = id;
         this.players = new ArrayList<>(players);
     }
 
@@ -44,22 +50,36 @@ public final class UnoGame {
         this.namer = namer;
     }
 
-    /** Shuffle, deal 7 each, flip a number card to start. */
+    /** Shuffle, deal {@link #DEFAULT_HAND_SIZE} each, flip a number card to start. */
     public void start() {
+        start(DEFAULT_HAND_SIZE);
+    }
+
+    /**
+     * Shuffle, deal {@code handSize} each, flip a number card to start.
+     *
+     * <p>{@code handSize} is clamped so the deal always leaves enough behind for the flip to
+     * find a number card — otherwise a large configured hand size could empty the deck.
+     */
+    public void start(int handSize) {
         deck.reset();
         hands.clear();
         discard.clear();
+
+        int perPlayer = dealSize(handSize);
         for (UUID p : players) {
             List<Card> h = new ArrayList<>();
-            for (int i = 0; i < 7; i++) {
-                h.add(deck.draw(discard));
+            for (int i = 0; i < perPlayer; i++) {
+                Card c = deck.draw(discard);
+                if (c == null) {
+                    break;
+                }
+                h.add(c);
             }
             hands.put(p, h);
         }
-        Card first;
-        do {
-            first = deck.draw(discard);
-        } while (first.kind() != Card.Kind.NUMBER); // simple, effect-free starting card
+
+        Card first = flipStartingCard();
         discard.add(first);
         activeColor = first.color();
         turn = 0;
@@ -68,13 +88,61 @@ public final class UnoGame {
         winner = null;
         pendingColorPlayer = null;
         pendingColorCard = null;
+        moves = 0;
         lastEvent = "Game started";
+    }
+
+    /**
+     * How many cards each player actually gets. The deal must leave more than the deck's
+     * non-number cards behind, so {@link #flipStartingCard} is guaranteed to find a number.
+     */
+    private int dealSize(int requested) {
+        int spare = Deck.NON_NUMBER_COUNT + 2;
+        int room = Math.max(1, (deck.size() - spare) / Math.max(1, players.size()));
+        return Math.max(1, Math.min(requested, room));
+    }
+
+    /**
+     * Turn over cards until a plain number shows — the classic effect-free starting card.
+     *
+     * <p>Everything turned over on the way goes <em>back into the deck</em>. Throwing those
+     * cards away (neither discarded nor returned) silently shrinks the deck every hand.
+     */
+    private Card flipStartingCard() {
+        List<Card> rejected = new ArrayList<>();
+        Card first = null;
+        Card c;
+        while ((c = deck.draw(discard)) != null) {
+            if (c.kind() == Card.Kind.NUMBER) {
+                first = c;
+                break;
+            }
+            rejected.add(c);
+        }
+        if (first == null) {
+            // Unreachable with a standard deck thanks to dealSize(), but if the deck were
+            // ever exhausted, settle for any coloured card rather than leaving no top card.
+            for (Iterator<Card> it = rejected.iterator(); it.hasNext(); ) {
+                Card r = it.next();
+                if (!r.isWild()) {
+                    first = r;
+                    it.remove();
+                    break;
+                }
+            }
+        }
+        deck.returnCards(rejected);
+        if (first == null) {
+            throw new IllegalStateException("Deck exhausted before a starting card could be flipped");
+        }
+        return first;
     }
 
     // ----------------------------------------------------------------- accessors
 
-    public UUID tableId() {
-        return tableId;
+    /** This game's own id (not a table id — a game outlives the table it was dealt at). */
+    public UUID id() {
+        return id;
     }
 
     public List<UUID> players() {
@@ -109,12 +177,22 @@ public final class UnoGame {
         return deck.size();
     }
 
+    /** Cards on the discard pile, including the face-up top card. */
+    public int discardSize() {
+        return discard.size();
+    }
+
     public UUID pendingColorPlayer() {
         return pendingColorPlayer;
     }
 
     public String lastEvent() {
         return lastEvent;
+    }
+
+    /** Monotonic counter of state changes — compare before/after to detect "nothing moved". */
+    public int moveCount() {
+        return moves;
     }
 
     public int handSize(UUID p) {
@@ -190,6 +268,7 @@ public final class UnoGame {
         }
         hand.remove(handIndex);
         discard.add(card);
+        moves++;
         if (card.isWild()) {
             pendingColorPlayer = player;
             pendingColorCard = card;
@@ -204,10 +283,11 @@ public final class UnoGame {
         if (pendingColorPlayer == null || !player.equals(pendingColorPlayer)) {
             return PlayResult.illegal("No colour choice pending.");
         }
-        activeColor = color;
+        activeColor = color == null || color == Card.Color.WILD ? Card.Color.RED : color;
         Card card = pendingColorCard;
         pendingColorPlayer = null;
         pendingColorCard = null;
+        moves++;
         return resolve(card, player);
     }
 
@@ -223,6 +303,14 @@ public final class UnoGame {
             return PlayResult.illegal("It's not your turn.");
         }
         Card c = deck.draw(discard);
+        moves++;
+        if (c == null) {
+            // Nothing left anywhere. Rebuilding the deck here would put a second copy of
+            // every card players are holding into play, so the turn simply passes.
+            lastEvent = namer.apply(player) + " had nothing to draw — the turn passes";
+            advance(1);
+            return PlayResult.drew(null);
+        }
         hands.get(player).add(c);
         lastEvent = namer.apply(player) + " drew a card";
         advance(1);
@@ -240,10 +328,11 @@ public final class UnoGame {
             return;
         }
         List<Card> hand = hands.remove(player);
-        if (hand != null && !hand.isEmpty() && discard.size() >= 1) {
+        if (hand != null && !hand.isEmpty() && !discard.isEmpty()) {
             discard.addAll(discard.size() - 1, hand); // below the top card — still the live top
         }
         players.remove(idx);
+        moves++;
         if (player.equals(pendingColorPlayer)) {
             pendingColorPlayer = null;
             pendingColorCard = null;
@@ -292,19 +381,20 @@ public final class UnoGame {
                 }
             }
             case DRAW2 -> {
-                drawTo(next, 2);
+                int got = drawTo(next, 2);
                 advance(2);
-                lastEvent = namer.apply(player) + " played +2 — " + namer.apply(next) + " draws 2 & skipped";
+                lastEvent = namer.apply(player) + " played +2 — " + namer.apply(next)
+                        + " draws " + got + " & skipped";
             }
             case WILD -> {
                 advance(1);
                 lastEvent = namer.apply(player) + " played Wild — colour is now " + activeColor.lower();
             }
             case WILD_DRAW4 -> {
-                drawTo(next, 4);
+                int got = drawTo(next, 4);
                 advance(2);
                 lastEvent = namer.apply(player) + " played Wild +4 — " + namer.apply(next)
-                        + " draws 4 & skipped; colour " + activeColor.lower();
+                        + " draws " + got + " & skipped; colour " + activeColor.lower();
             }
             default -> {
                 advance(1);
@@ -314,10 +404,22 @@ public final class UnoGame {
         return PlayResult.ok(card);
     }
 
-    private void drawTo(UUID p, int n) {
-        for (int i = 0; i < n; i++) {
-            hands.get(p).add(deck.draw(discard));
+    /** Deal {@code n} penalty cards, stopping early if the deck is genuinely exhausted. */
+    private int drawTo(UUID p, int n) {
+        List<Card> hand = hands.get(p);
+        if (hand == null) {
+            return 0;
         }
+        int given = 0;
+        for (int i = 0; i < n; i++) {
+            Card c = deck.draw(discard);
+            if (c == null) {
+                break;
+            }
+            hand.add(c);
+            given++;
+        }
+        return given;
     }
 
     private void advance(int steps) {
@@ -328,11 +430,6 @@ public final class UnoGame {
     private UUID peek(int steps) {
         int n = players.size();
         return players.get((((turn + direction * steps) % n) + n) % n);
-    }
-
-    private static String bukkitName(UUID p) {
-        String nm = Bukkit.getOfflinePlayer(p).getName();
-        return nm != null ? nm : p.toString().substring(0, 8);
     }
 
     /** Result of a play/draw, for GameManager to act on. */
@@ -365,6 +462,7 @@ public final class UnoGame {
             return new PlayResult(Status.WIN, null, card);
         }
 
+        /** {@code card} is null when the deck had nothing left to give. */
         public static PlayResult drew(Card card) {
             return new PlayResult(Status.DREW, null, card);
         }

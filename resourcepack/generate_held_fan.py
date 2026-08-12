@@ -18,16 +18,46 @@ radiate from one bottom pivot. No world entities -> no lag, no clipping.
 """
 import json
 import os
+import re
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CARD_DIR = os.path.join(HERE, "assets/minecraft/textures/item/cards")
 MODELS = os.path.join(HERE, "assets/uno/models/item/held")
 ITEM = os.path.join(HERE, "assets/uno/items/held.json")
+HAND_MANAGER = os.path.join(
+    HERE, "..", "src", "main", "java", "com", "unoplugin", "hand", "HandManager.java")
 
-MAX_SLOTS = 21               # largest hand the fan can show at once
-S = (MAX_SLOTS - 1) // 2     # 10
-# Per-card angular step for each density tier (must match DENSITIES in HandManager).
-DENSITIES = [19.0, 10.0, 5.0]   # tier 0 = small hands (wide) ... tier 2 = big hands (tight)
+
+def java_constants():
+    """Read MAX_SLOTS and DENSITIES straight out of HandManager.java.
+
+    These two values have to agree exactly between the plugin and this generator: the
+    plugin writes "<card>_<tier>" into custom_model_data and the pack has to have a model
+    at that name. Keeping a second copy here meant changing one and silently getting empty
+    or wrong-angle cards, so the Java file is the single source of truth and this script
+    parses it.
+    """
+    try:
+        with open(HAND_MANAGER, encoding="utf-8") as fh:
+            src = fh.read()
+    except OSError as exc:
+        sys.exit(f"Cannot read {HAND_MANAGER}: {exc}\n"
+                 "Run this script from inside the repo — it reads the plugin's constants.")
+
+    slots = re.search(r"MAX_SLOTS\s*=\s*(\d+)", src)
+    densities = re.search(r"DENSITIES\s*=\s*\{([^}]*)\}", src)
+    if not slots or not densities:
+        sys.exit("Could not find MAX_SLOTS / DENSITIES in HandManager.java — if they were "
+                 "renamed, update java_constants() here to match.")
+
+    values = [float(v) for v in densities.group(1).replace(" ", "").split(",") if v]
+    return int(slots.group(1)), values
+
+
+MAX_SLOTS, DENSITIES = java_constants()
+S = (MAX_SLOTS - 1) // 2
+print(f"HandManager.java: MAX_SLOTS={MAX_SLOTS} DENSITIES={DENSITIES}")
 BASE_TILT_Z = -12.0          # lean the whole fan slightly right
 DEPTH_STEP = 0.04            # SMALL monotonic step -> subtle left-front overlap, no giant card
 SEL_FRONT = 0.5             # selected sits at this fixed front depth -> always on top, readable

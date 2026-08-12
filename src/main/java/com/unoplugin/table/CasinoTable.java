@@ -5,13 +5,19 @@ import org.bukkit.Location;
 import java.util.UUID;
 
 /**
- * Casino Table — 4 to 6 players, with the Fish Dealer at the head (+forward).
- * Six player seats are arranged around the three non-dealer sides.
+ * Casino Table — with the Fish Dealer at the head (+forward). Six player seats are
+ * arranged around the three non-dealer sides; the player limits come from config.yml
+ * ({@code tables.casino.min-players} / {@code max-players}).
  */
 public class CasinoTable extends UnoTable {
 
-    public CasinoTable(UUID id, Location anchor, float yaw) {
+    private final int minPlayers;
+    private final int maxPlayers;
+
+    public CasinoTable(UUID id, Location anchor, float yaw, int minPlayers, int maxPlayers) {
         super(id, anchor, yaw);
+        this.minPlayers = minPlayers;
+        this.maxPlayers = maxPlayers;
     }
 
     @Override
@@ -21,12 +27,13 @@ public class CasinoTable extends UnoTable {
 
     @Override
     public int minPlayers() {
-        return 4;
+        return Math.min(minPlayers, seatCount());
     }
 
     @Override
     public int maxPlayers() {
-        return 6;
+        // However high the config goes, you can't seat more players than there are stools.
+        return Math.min(maxPlayers, seatCount());
     }
 
     @Override
@@ -43,7 +50,7 @@ public class CasinoTable extends UnoTable {
         seats.add(seatFacing(0.7, 2.0, 90f));
     }
 
-    /** Where the Fish Dealer stands (used from build step 7), facing the players. */
+    /** Where the Fish Dealer stands, facing the players. */
     public Location dealerSpot() {
         Location spot = seatAt(2.4, 0.0);
         spot.setYaw(yaw + 180f);

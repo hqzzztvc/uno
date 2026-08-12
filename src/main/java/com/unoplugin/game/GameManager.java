@@ -3,8 +3,13 @@ package com.unoplugin.game;
 import com.unoplugin.hand.HandManager;
 import com.unoplugin.table.TableManager;
 import com.unoplugin.table.UnoTable;
+import com.unoplugin.util.Messages;
+import com.unoplugin.util.NameCache;
+import com.unoplugin.util.Settings;
 import net.kyori.adventure.bossbar.BossBar;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -20,8 +25,10 @@ import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.Plugin;
+import org.bukkit.scheduler.BukkitTask;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -32,19 +39,25 @@ import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Owns running {@link UnoGame}s, wires them to the {@link HandManager} (each player's fan),
- * shows a status bossbar, runs the wild-colour GUI, and drives simple bot opponents.
+ * shows a status bossbar, runs the wild-colour GUI, drives simple bot opponents, and keeps
+ * an idle player from freezing the table.
  * Implements {@link HandManager.CardActions} so play/draw input flows into the game rules.
  */
 public final class GameManager implements Listener, HandManager.CardActions {
 
     private final Plugin plugin;
     private final HandManager handManager;
+    private final Messages messages;
+    private final Settings settings;
+    private final NameCache names;
     private TableManager tableManager;                              // set after construction
 
     private final Map<UUID, UnoGame> games = new HashMap<>();      // gameId -> game
     private final Map<UUID, UUID> playerGame = new HashMap<>();    // participant -> gameId
+    private final Map<UUID, UUID> gameTable = new HashMap<>();     // gameId -> table it's at
     private final Map<UUID, BossBar> bars = new HashMap<>();       // gameId -> bossbar
     private final Map<UUID, PileRenderer> piles = new HashMap<>(); // gameId -> table piles
+    private final Map<UUID, List<BukkitTask>> turnTasks = new HashMap<>(); // gameId -> idle timers
     private final Map<UUID, String> botNames = new HashMap<>();    // bot id -> name
     private final Set<UUID> bots = new HashSet<>();
     private GameListener listener;                                  // optional (the bet layer)
@@ -58,9 +71,13 @@ public final class GameManager implements Listener, HandManager.CardActions {
         void onForfeit(UUID gameId, UUID player);
     }
 
-    public GameManager(Plugin plugin, HandManager handManager) {
+    public GameManager(Plugin plugin, HandManager handManager, Messages messages,
+                       Settings settings, NameCache names) {
         this.plugin = plugin;
         this.handManager = handManager;
+        this.messages = messages;
+        this.settings = settings;
+        this.names = names;
     }
 
     /** Wire in the table registry so piles can centre on the host's seated table. */
@@ -85,7 +102,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
     /** Start a solo test game: the host plus {@code botCount} simple bots. */
     public void startTest(Player host, int botCount) {
         if (playerGame.containsKey(host.getUniqueId())) {
-            host.sendMessage("§eYou're already in a game. Finish it first.");
+            messages.send(host, "game.already-in-game");
             return;
         }
         botCount = Math.max(1, Math.min(9, botCount));
@@ -101,18 +118,18 @@ public final class GameManager implements Listener, HandManager.CardActions {
     /** Start a real game with everyone seated at the initiator's table, plus optional bots. */
     public void startSeated(Player initiator, int extraBots) {
         if (tableManager == null) {
-            initiator.sendMessage("§cTables aren't available right now.");
+            messages.send(initiator, "game.tables-unavailable");
             return;
         }
         UnoTable table = tableManager.seatedTable(initiator.getUniqueId());
         if (table == null) {
-            initiator.sendMessage("§eSit at a table first (right-click a seat), then run §6/uno start§e.");
+            messages.send(initiator, "game.sit-first");
             return;
         }
         List<UUID> humans = new ArrayList<>();
         for (UUID u : tableManager.seatedPlayersAt(table.id())) {
             if (playerGame.containsKey(u)) {
-                initiator.sendMessage("§c" + displayName(u) + " is already in a game.");
+                messages.send(initiator, "game.other-in-game", "player", displayName(u));
                 return;
             }
             if (Bukkit.getPlayer(u) != null) {
@@ -129,7 +146,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
             players.add(newBot("Bot " + i));
         }
         if (players.size() < 2) {
-            initiator.sendMessage("§eNeed at least 2 players — sit a friend down too, or add bots: §6/uno start <bots>§e.");
+            messages.send(initiator, "game.need-players");
             return;
         }
         launch(players, table, initiator);
@@ -171,8 +188,9 @@ public final class GameManager implements Listener, HandManager.CardActions {
         UUID gameId = UUID.randomUUID();
         UnoGame game = new UnoGame(gameId, players);
         game.setNamer(this::displayName);
-        game.start();
+        game.start(settings.startingHandSize());
         games.put(gameId, game);
+        gameTable.put(gameId, table == null ? null : table.id());
         for (UUID p : players) {
             playerGame.put(p, gameId);
         }
@@ -186,12 +204,11 @@ public final class GameManager implements Listener, HandManager.CardActions {
             pileYaw = table.yaw();
             double r = Math.toRadians(pileYaw);
             Vector right = new Vector(Math.cos(r), 0, Math.sin(r));
-            // Bottom card sits flush on the casino felt surface (top ~0.75).
-            double surfaceY = 0.757;
+            // Bottom card sits flush on the casino felt surface.
             discardLoc = centre.clone().add(right.clone().multiply(-0.38));
-            discardLoc.setY(centre.getY() + surfaceY);
+            discardLoc.setY(centre.getY() + UnoTable.SURFACE_Y);
             drawLoc = centre.clone().add(right.clone().multiply(0.38));
-            drawLoc.setY(centre.getY() + surfaceY);
+            drawLoc.setY(centre.getY() + UnoTable.SURFACE_Y);
         } else {
             Location base = anchor.getLocation();
             Vector fwd = base.getDirection().setY(0);
@@ -214,8 +231,8 @@ public final class GameManager implements Listener, HandManager.CardActions {
             }
             Player pl = Bukkit.getPlayer(p);
             if (pl != null) {
-                pl.sendMessage("§6§lUNO §r§7started — " + players.size() + " players. Good luck!");
-                pl.sendMessage("§7A/D or wheel = pick · §aleft-click/Q = play · §eright-click/F = draw");
+                messages.send(pl, "game.started", "count", players.size());
+                messages.send(pl, "game.controls");
             }
         }
         afterMove(game); // renders every hand, shows the bar, drives the first bot if needed
@@ -228,7 +245,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
     public boolean play(Player player, int selectedIndex) {
         UnoGame game = gameOf(player.getUniqueId());
         if (game == null) {
-            return false; // not in a game — let HandManager use its test stub
+            return false;
         }
         handleResult(game, player.getUniqueId(), game.play(player.getUniqueId(), selectedIndex), player);
         return true;
@@ -250,23 +267,27 @@ public final class GameManager implements Listener, HandManager.CardActions {
         switch (r.status) {
             case ILLEGAL -> {
                 if (actorPlayer != null) {
-                    actorPlayer.sendActionBar(Component.text("§c" + r.message));
+                    actorPlayer.sendActionBar(Component.text(r.message, NamedTextColor.RED));
                 }
             }
             case NEED_COLOR -> {
                 if (isBot(actor)) {
                     handleResult(game, actor, game.chooseColor(actor, botWildColor(game, actor)), null);
-                } else if (actorPlayer != null) {
-                    openColorGui(actorPlayer, game);
+                } else {
+                    if (actorPlayer != null) {
+                        openColorGui(actorPlayer, game);
+                    }
+                    // An unanswered colour prompt stalls the table just as hard as an idle turn.
+                    armTurnTimer(game, actor);
                 }
             }
             case DREW -> afterMove(game);
             case OK -> {
-                updateDiscard(game, actorPlayer, r.card);
+                updateDiscard(game, r.card);
                 afterMove(game);
             }
             case WIN -> {
-                updateDiscard(game, actorPlayer, r.card);
+                updateDiscard(game, r.card);
                 afterMove(game); // broadcasts the win + final state (no bot move since over)
                 plugin.getServer().getScheduler().runTaskLater(plugin, () -> endGame(game), 40L);
             }
@@ -274,8 +295,8 @@ public final class GameManager implements Listener, HandManager.CardActions {
     }
 
     /** Drop the just-played card onto the discard pile, face-up. */
-    private void updateDiscard(UnoGame game, Player actorPlayer, Card card) {
-        PileRenderer pile = piles.get(game.tableId());
+    private void updateDiscard(UnoGame game, Card card) {
+        PileRenderer pile = piles.get(game.id());
         if (pile == null || card == null) {
             return;
         }
@@ -285,18 +306,25 @@ public final class GameManager implements Listener, HandManager.CardActions {
     /** Broadcast the last event, re-render everyone, update the bar, and let a bot move. */
     private void afterMove(UnoGame game) {
         if (!game.lastEvent().isEmpty()) {
-            broadcast(game, "§7" + game.lastEvent());
+            broadcast(game, messages.get("game.event", "event", game.lastEvent()));
         }
         renderHands(game);
         updateBar(game);
-        PileRenderer pile = piles.get(game.tableId());
+        PileRenderer pile = piles.get(game.id());
         if (pile != null) {
             pile.setDrawCount(game.drawPileSize()); // shrink/grow the deck stack
         }
-        if (!game.isOver() && isBot(game.currentPlayer())) {
-            UUID gid = game.tableId();
+        if (game.isOver()) {
+            cancelTurnTimer(game.id());
+            return;
+        }
+        if (isBot(game.currentPlayer())) {
+            cancelTurnTimer(game.id());
+            UUID gid = game.id();
             long delay = 12L + ThreadLocalRandom.current().nextInt(17); // ~0.6-1.4s, varied
             plugin.getServer().getScheduler().runTaskLater(plugin, () -> botMove(gid), delay);
+        } else {
+            armTurnTimer(game, game.currentPlayer());
         }
     }
 
@@ -320,15 +348,82 @@ public final class GameManager implements Listener, HandManager.CardActions {
         handleResult(game, bot, r, null);
     }
 
+    // ------------------------------------------------------------- idle players
+
+    /**
+     * Arm the idle timer for whoever the game is waiting on.
+     *
+     * <p>Without this, one player alt-tabbing freezes the hand, the table and the pot for
+     * everyone else indefinitely. On expiry we make the smallest legal move for them: pick a
+     * colour if a wild is pending, otherwise draw (which passes the turn).
+     */
+    private void armTurnTimer(UnoGame game, UUID waitingOn) {
+        UUID gid = game.id();
+        cancelTurnTimer(gid);
+        int timeout = settings.turnTimeoutSeconds();
+        if (timeout <= 0 || game.isOver() || isBot(waitingOn)) {
+            return;
+        }
+        int snapshot = game.moveCount();
+        List<BukkitTask> tasks = new ArrayList<>(2);
+        int warn = settings.turnWarningSeconds();
+        if (warn > 0) {
+            tasks.add(plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+                UnoGame g = games.get(gid);
+                if (g == null || g.moveCount() != snapshot) {
+                    return;
+                }
+                Player p = Bukkit.getPlayer(waitingOn);
+                if (p != null) {
+                    messages.actionBar(p, "game.turn-warning", "seconds", warn);
+                }
+            }, (long) (timeout - warn) * 20L));
+        }
+        tasks.add(plugin.getServer().getScheduler().runTaskLater(plugin,
+                () -> forceTurn(gid, waitingOn, snapshot), (long) timeout * 20L));
+        turnTasks.put(gid, tasks);
+    }
+
+    private void cancelTurnTimer(UUID gameId) {
+        List<BukkitTask> tasks = turnTasks.remove(gameId);
+        if (tasks != null) {
+            tasks.forEach(BukkitTask::cancel);
+        }
+    }
+
+    /** The idle player's turn, played for them. */
+    private void forceTurn(UUID gid, UUID actor, int snapshot) {
+        UnoGame game = games.get(gid);
+        if (game == null || game.isOver() || game.moveCount() != snapshot) {
+            return; // they moved after all
+        }
+        Player p = Bukkit.getPlayer(actor);
+        if (actor.equals(game.pendingColorPlayer())) {
+            if (p != null) {
+                p.closeInventory();
+            }
+            handleResult(game, actor, game.chooseColor(actor, preferredColor(game, actor)), p);
+            return;
+        }
+        if (!actor.equals(game.currentPlayer())) {
+            return;
+        }
+        broadcast(game, messages.get("game.turn-timeout", "player", displayName(actor)));
+        handleResult(game, actor, game.draw(actor), p);
+    }
+
+    // -------------------------------------------------------------- end a hand
+
     private void endGame(UnoGame game) {
-        UUID gid = game.tableId();
+        UUID gid = game.id();
         if (!games.containsKey(gid)) {
             return; // already ended (win-delay + quit can both fire)
         }
         UUID winner = game.winner();
         if (winner != null) {
-            broadcast(game, "§6§l" + displayName(winner) + " wins! 🎉");
+            broadcast(game, messages.get("game.win", "player", displayName(winner)));
         }
+        cancelTurnTimer(gid);
         BossBar bar = bars.remove(gid);
         PileRenderer pile = piles.remove(gid);
         if (pile != null) {
@@ -347,9 +442,67 @@ public final class GameManager implements Listener, HandManager.CardActions {
             }
         }
         games.remove(gid);
+        gameTable.remove(gid);
         if (listener != null) {
             listener.onGameEnd(gid, winner); // the bet layer settles the pot
         }
+    }
+
+    // ------------------------------------------------------------ admin access
+
+    /** Every running game id. */
+    public Collection<UUID> gameIds() {
+        return List.copyOf(games.keySet());
+    }
+
+    /** The game a player is in, or null. */
+    public UUID gameIdOf(UUID playerId) {
+        return playerGame.get(playerId);
+    }
+
+    /** The table a game is being played at, or null for a table-less test game. */
+    public UUID tableOfGame(UUID gameId) {
+        return gameTable.get(gameId);
+    }
+
+    /** True if a hand is in progress at this table — it must not be removed underneath one. */
+    public boolean hasGameAtTable(UUID tableId) {
+        return tableId != null && gameTable.containsValue(tableId);
+    }
+
+    public List<UUID> playersOf(UUID gameId) {
+        UnoGame game = games.get(gameId);
+        return game == null ? List.of() : game.players();
+    }
+
+    public UUID currentTurnOf(UUID gameId) {
+        UnoGame game = games.get(gameId);
+        return game == null ? null : game.currentPlayer();
+    }
+
+    /**
+     * Force a hand to finish (the admin escape hatch). It ends with no winner, so the bet
+     * layer refunds the pot to whoever staked it rather than handing it to anyone.
+     */
+    public boolean forceEnd(UUID gameId) {
+        UnoGame game = games.get(gameId);
+        if (game == null) {
+            return false;
+        }
+        broadcast(game, messages.get("game.ended-by-admin"));
+        endGame(game);
+        return true;
+    }
+
+    /** Force-end every running hand. Returns how many were ended. */
+    public int forceEndAll() {
+        int n = 0;
+        for (UUID gid : List.copyOf(games.keySet())) {
+            if (forceEnd(gid)) {
+                n++;
+            }
+        }
+        return n;
     }
 
     // -------------------------------------------------------------- rendering
@@ -367,17 +520,19 @@ public final class GameManager implements Listener, HandManager.CardActions {
     }
 
     private void updateBar(UnoGame game) {
-        BossBar bar = bars.get(game.tableId());
+        BossBar bar = bars.get(game.id());
         if (bar == null) {
             return;
         }
         Card top = game.top();
-        String dir = game.direction() > 0 ? "↻" : "↺";
-        bar.name(Component.text("§fTop: §6" + top.label()
-                + "  §f| Colour: " + colorTag(game.activeColor()) + cap(game.activeColor().lower())
-                + "  §f| Turn: §b" + displayName(game.currentPlayer()) + " " + dir
-                + "  §f| Deck: §7" + game.drawPileSize()));
-        bar.color(barColor(game.activeColor()));
+        Card.Color active = game.activeColor();
+        bar.name(messages.get("game.bossbar",
+                "top", top.label(),
+                "colour", Component.text(cap(active.lower()), textColor(active)),
+                "player", displayName(game.currentPlayer()),
+                "dir", game.direction() > 0 ? "↻" : "↺",
+                "deck", game.drawPileSize()));
+        bar.color(barColor(active));
         for (UUID p : game.players()) {
             Player pl = Bukkit.getPlayer(p);
             if (pl != null) {
@@ -386,11 +541,11 @@ public final class GameManager implements Listener, HandManager.CardActions {
         }
     }
 
-    private void broadcast(UnoGame game, String msg) {
+    private void broadcast(UnoGame game, Component message) {
         for (UUID p : game.players()) {
             Player pl = Bukkit.getPlayer(p);
             if (pl != null) {
-                pl.sendMessage(msg);
+                pl.sendMessage(message);
             }
         }
     }
@@ -398,13 +553,13 @@ public final class GameManager implements Listener, HandManager.CardActions {
     // ----------------------------------------------------------- wild colour
 
     private void openColorGui(Player p, UnoGame game) {
-        ColorPickerHolder holder = new ColorPickerHolder(game.tableId());
-        Inventory inv = Bukkit.createInventory(holder, 9, Component.text("Pick a colour for your wild"));
+        ColorPickerHolder holder = new ColorPickerHolder(game.id());
+        Inventory inv = Bukkit.createInventory(holder, 9, messages.get("game.colour-title"));
         holder.inventory = inv;
-        inv.setItem(2, pane(Material.RED_STAINED_GLASS_PANE, "§c§lRed"));
-        inv.setItem(3, pane(Material.GREEN_STAINED_GLASS_PANE, "§a§lGreen"));
-        inv.setItem(5, pane(Material.BLUE_STAINED_GLASS_PANE, "§9§lBlue"));
-        inv.setItem(6, pane(Material.YELLOW_STAINED_GLASS_PANE, "§e§lYellow"));
+        inv.setItem(2, pane(Material.RED_STAINED_GLASS_PANE, messages.get("game.colour-red")));
+        inv.setItem(3, pane(Material.GREEN_STAINED_GLASS_PANE, messages.get("game.colour-green")));
+        inv.setItem(5, pane(Material.BLUE_STAINED_GLASS_PANE, messages.get("game.colour-blue")));
+        inv.setItem(6, pane(Material.YELLOW_STAINED_GLASS_PANE, messages.get("game.colour-yellow")));
         p.openInventory(inv);
     }
 
@@ -451,7 +606,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
         });
     }
 
-    /** The colour the player holds most of (for bots / auto-pick); RED if none. */
+    /** The colour the player holds most of (for auto-pick); RED if none. */
     private Card.Color preferredColor(UnoGame game, UUID p) {
         int[] counts = new int[4];
         for (String name : game.handNames(p)) {
@@ -506,10 +661,10 @@ public final class GameManager implements Listener, HandManager.CardActions {
         if (game == null) {
             return;
         }
-        broadcast(game, "§c" + event.getPlayer().getName() + " left the hand.");
+        broadcast(game, messages.get("game.left", "player", event.getPlayer().getName()));
         playerGame.remove(id);
         if (listener != null) {
-            listener.onForfeit(game.tableId(), id);
+            listener.onForfeit(game.id(), id);
         }
         game.forfeit(id);
         if (game.isOver() || humansLeft(game) == 0) {
@@ -530,6 +685,9 @@ public final class GameManager implements Listener, HandManager.CardActions {
     }
 
     public void shutdown() {
+        for (UUID gid : List.copyOf(turnTasks.keySet())) {
+            cancelTurnTimer(gid);
+        }
         for (UnoGame game : new ArrayList<>(games.values())) {
             endGame(game);
         }
@@ -546,30 +704,23 @@ public final class GameManager implements Listener, HandManager.CardActions {
         return bots.contains(id);
     }
 
-    private String displayName(UUID id) {
+    /** Never blocks: bots resolve locally, everyone else comes out of the name cache. */
+    public String displayName(UUID id) {
         String bot = botNames.get(id);
-        if (bot != null) {
-            return bot;
-        }
-        Player p = Bukkit.getPlayer(id);
-        if (p != null) {
-            return p.getName();
-        }
-        String n = Bukkit.getOfflinePlayer(id).getName();
-        return n != null ? n : "Player";
+        return bot != null ? bot : names.name(id);
     }
 
     private static String cap(String s) {
         return s.isEmpty() ? s : Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
-    private static String colorTag(Card.Color c) {
+    private static NamedTextColor textColor(Card.Color c) {
         return switch (c) {
-            case RED -> "§c";
-            case GREEN -> "§a";
-            case BLUE -> "§9";
-            case YELLOW -> "§e";
-            default -> "§f";
+            case RED -> NamedTextColor.RED;
+            case GREEN -> NamedTextColor.GREEN;
+            case BLUE -> NamedTextColor.BLUE;
+            case YELLOW -> NamedTextColor.YELLOW;
+            default -> NamedTextColor.WHITE;
         };
     }
 
@@ -583,10 +734,10 @@ public final class GameManager implements Listener, HandManager.CardActions {
         };
     }
 
-    private static ItemStack pane(Material mat, String name) {
+    private static ItemStack pane(Material mat, Component name) {
         ItemStack it = new ItemStack(mat);
         ItemMeta meta = it.getItemMeta();
-        meta.displayName(Component.text(name));
+        meta.displayName(name.decoration(TextDecoration.ITALIC, false));
         it.setItemMeta(meta);
         return it;
     }

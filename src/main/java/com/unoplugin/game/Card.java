@@ -115,6 +115,21 @@ public final class Card {
         return Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
+    /** Value equality — two Red 5s are the same card, however they were constructed. */
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        return o instanceof Card other
+                && color == other.color && kind == other.kind && number == other.number;
+    }
+
+    @Override
+    public int hashCode() {
+        return (color.ordinal() * 31 + kind.ordinal()) * 31 + number;
+    }
+
     @Override
     public String toString() {
         return name();

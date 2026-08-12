@@ -1,64 +1,93 @@
 # ============================================================
 #  UNO Plugin Configuration
 # ============================================================
+#
+#  Every key in this file is read by the plugin. If you change something here and
+#  nothing happens, that is a bug worth reporting — not an unimplemented feature.
+#
+#  Player-facing text lives in messages.yml, not here.
+#
+#  Reload with /uno reload (re-reads this file and messages.yml).
 
 # ---- Resource Pack ----
+#
+#  The plugin does NOT host the pack. Either hand players the zip yourself, or
+#  host it somewhere reachable and put the direct download link below — it is then
+#  offered to every player as they join.
 resource-pack:
-  # Which texture pack is active. "default" uses the built-in scaffold
-  # you fill with your Aseprite art (see resourcepack/NAMING_GUIDE.md).
-  active-pack: default
-
-  # How the pack reaches players:
-  #   embedded = plugin hosts the zip on its own built-in HTTP server (recommended)
-  #   url      = you host the zip yourself and provide the link below
-  serve-mode: embedded
-
-  # Used when serve-mode: embedded
-  embedded:
-    # Public address players can reach (usually your server's IP/host).
-    # "auto" uses the server's configured IP.
-    host: auto
-    port: 8765
-
-  # Used when serve-mode: url
   url:
+    # Direct link to the pack zip. Empty = don't send a pack at all.
     link: ""
+    # SHA-1 of that zip. Strongly recommended: without it clients re-download the
+    # pack on every join instead of using their cache.
     sha1: ""
 
-  # Require players to accept the pack before sitting at a table.
-  require: true
+  # Kick players who decline the pack. Only meaningful when a link is set.
+  require: false
 
-  # Prompt shown when sending the pack.
-  prompt: "&eUNO needs this resource pack for card textures. Please accept!"
+  # Prompt shown with the download request (MiniMessage formatting).
+  prompt: "<yellow>UNO needs this resource pack for the card textures. Please accept!"
 
 # ---- Gameplay ----
 game:
-  # Seconds a player may stay disconnected before forfeiting (seat reserved).
-  reconnect-grace-seconds: 90
-
-  # Seconds before a turn is auto-skipped/auto-drawn for an idle player.
-  # 0 disables the turn timer.
-  turn-timeout-seconds: 0
-
-  # Cards dealt to each player at the start.
+  # Cards dealt to each player at the start of a hand.
+  # Clamped so the deal can never empty the deck (at 6 players the ceiling is 12).
   starting-hand-size: 7
 
-  # Penalty cards drawn for failing to call UNO in time.
-  uno-penalty-cards: 2
+  # Seconds an idle player's turn may sit before it is played for them: they draw a
+  # card and the turn passes. A pending wild colour choice is auto-picked the same way.
+  # 0 disables the timer — one AFK player then stalls the table (and the pot) forever.
+  turn-timeout-seconds: 60
 
-  # Seconds after reaching 1 card in which a player must call UNO (left-click).
-  uno-call-window-seconds: 3
+  # Seconds of warning before that happens. 0 = no warning.
+  turn-warning-seconds: 10
+
+# ---- Tables ----
+tables:
+  # Most tables allowed in a single world. 0 = unlimited.
+  max-per-world: 0
+
+  casino:
+    min-players: 4
+    max-players: 6
+
+# ---- Fish Dealer ----
+dealer:
+  # Spawn the dealer at the head of each casino table.
+  enabled: true
 
 # ---- Gambling ("Let It Ride") ----
-# Players stake items by dropping them onto the table; the winner of the hand
-# takes the whole pot. Staked items are held in plugins/UNO/escrow.yml, so a
-# crash or restart returns them to whoever put them in.
+#
+#  Players stake items by dropping them onto the table; the winner of the hand takes
+#  the whole pot. Staked items are held in plugins/UNO/escrow/, so a crash or restart
+#  returns them to whoever put them in.
 gambling:
   enabled: true
 
   # Seconds an ante may sit open before it expires and refunds everyone.
   # 0 disables the timeout (a stalled bet then holds items until someone cancels).
   ante-seconds: 300
+
+  # Append every stake, payout, refund and forfeit to plugins/UNO/bets.log.
+  # Leave this on: it is the only record you will have when someone claims theft.
+  audit-log: true
+
+  limits:
+    # Largest pot, counted in items, the table will accept. 0 = unlimited.
+    max-pot-items: 0
+
+    # Items a player must have staked before /gamble ready is accepted.
+    min-ante-items: 1
+
+    # Refuse to stake anything that can hide other items inside it (shulker boxes,
+    # bundles). Without this, "one item" can be a shulker box of netherite.
+    block-containers: true
+
+    # Materials that may never be staked. An entry also matches any material ENDING
+    # with it, so "SHULKER_BOX" covers all 17 dyed variants.
+    blacklist:
+      - SHULKER_BOX
+      - BUNDLE
 
   ride:
     # Offer the winner the choice to leave the pot in for another hand.
@@ -69,21 +98,12 @@ gambling:
     window-seconds: 20
 
     # Seconds the table then has to match the pot and challenge the rider.
-    # Nobody antes in time = the rider is paid out.
+    # Anyone who staked but never locked in is refunded when this expires.
     challenge-seconds: 90
 
-# ---- Tables ----
-tables:
-  casino:
-    min-players: 4
-    max-players: 6
-
-# ---- Fish Dealer ----
-dealer:
-  enabled: true        # Master toggle for the casino table dealer.
-  chat: true           # Show dialogue in chat.
-  titles: true         # Show dialogue as title/subtitle.
-  long-game-minutes: 10 # Minutes of play before the "long game" line triggers.
-
 # ---- Debug ----
+#
+#  Enables the throwaway development commands (/uno testcards, /uno hand,
+#  /uno cleartest, /uno fan, /uno fanclear). They spawn per-tick display entities
+#  and are not meant for a live server.
 debug: false

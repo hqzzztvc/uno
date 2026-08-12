@@ -25,3 +25,13 @@ replay_pid*
 
 target/
 
+
+# macOS Finder metadata — noise in every directory one of us opens
+.DS_Store
+**/.DS_Store
+
+# Stale duplicate of the card art already in resourcepack/assets/minecraft/textures/item/cards
+cards_textures_backup/
+
+# Local test server (see CLAUDE.md); never commit worlds, logs or the server jar
+server/

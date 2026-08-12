@@ -17,6 +17,13 @@ public abstract class UnoTable {
 
     public enum Type { CASINO }
 
+    /**
+     * Height of the felt surface above {@link #anchor}. Anything that sits ON the table —
+     * the card piles, the pot — measures from here, so it lives in one place rather than
+     * being re-typed as a magic 0.757 in each renderer.
+     */
+    public static final double SURFACE_Y = 0.757;
+
     protected final UUID id;
     /** Table centre: clicked-block top, +0.5 on X/Z. Surfaces and seats derive from this. */
     protected final Location anchor;

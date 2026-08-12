@@ -95,24 +95,28 @@ public final class PileRenderer {
         }
     }
 
-    /** Drop a card FACE-UP onto the discard stack. */
+    /**
+     * Drop a card FACE-UP onto the discard stack.
+     *
+     * <p>When the heap is full the dealer squares it up: every display is cleared and the new
+     * card starts a fresh stack. The obvious alternative — evict the bottom card and shift the
+     * other nine down a step — costs ten entity moves to every nearby player on <em>every</em>
+     * card played. This costs ten removals once per ten plays, and the card that matters (the
+     * top one, which is the live game state) is always the one you can see.
+     */
     public void addToDiscard(Card card) {
+        if (discard.size() >= DISCARD_MAX) {
+            for (ItemDisplay d : discard) {
+                if (d.isValid()) {
+                    d.remove();
+                }
+            }
+            discard.clear();
+        }
         Location l = discardLoc.clone();
         l.add(jitter(DISC_STAGGER), discard.size() * STACK_GAP, jitter(DISC_STAGGER));
         l.setYaw(yaw + (float) jitter(DISC_TILT));
         discard.add(spawn(l, "flat_" + card.name()));
-        if (discard.size() > DISCARD_MAX) {
-            ItemDisplay old = discard.remove(0);
-            if (old.isValid()) {
-                old.remove();
-            }
-            // Re-base the whole pile down one card so it never creeps up out of readable range.
-            for (ItemDisplay d : discard) {
-                if (d.isValid()) {
-                    d.teleport(d.getLocation().subtract(0, STACK_GAP, 0));
-                }
-            }
-        }
     }
 
     public void remove() {

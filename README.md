@@ -28,9 +28,10 @@ No mods. Everything is built from vanilla display entities plus a client-side re
 
    Copy `UNO-pack.zip` into `.minecraft/resourcepacks/` and enable it in **Options → Resource Packs**.
 
-> **Note:** the plugin does not currently serve the pack to players. The `resource-pack` section in
-> `config.yml` is logged on startup but not implemented — the zip has to reach clients some other way.
-> Without the pack, every card renders as a blank sheet of paper.
+   Or host the zip yourself and let the server offer it on join — set `resource-pack.url.link` (and
+   `sha1`, so clients cache it) in `config.yml`. The plugin never hosts the pack itself.
+
+> **Note:** without the pack, every card renders as a blank sheet of paper.
 
 ## Playing
 
@@ -87,9 +88,11 @@ The rules that give the mode its teeth:
 - **Quitting mid-hand is forfeiting.** Your stake stays in the pot for whoever wins — otherwise
   disconnecting would be a free undo on a losing bet. Leaving during the ante, before cards are
   dealt, refunds you normally.
-- **Nothing is ever held only in memory.** Staked items are written to `plugins/UNO/escrow.yml` the
+- **Nothing is ever held only in memory.** Staked items are written to `plugins/UNO/escrow/` the
   instant they leave your inventory, so a crash, a `kill -9` or a power cut still returns them.
   Anything owed to an offline player is handed over on their next login.
+- **Every movement is logged.** Stakes, payouts, refunds and forfeits are appended to
+  `plugins/UNO/bets.log` with timestamps and UUIDs, so "he took my diamonds" has an answer.
 - The pot on the table is a *display*, not dropped items — it can't despawn, be hoovered by a hopper,
   or be grabbed by someone walking past.
 - Bots never collect. A bot win is a push and everyone is refunded.
@@ -97,61 +100,91 @@ The rules that give the mode its teeth:
 
 ## Commands
 
+All subcommands tab-complete; admin ones are hidden from players who can't use them.
+
 | Command | Permission | |
 |---|---|---|
+| `/uno help` | `uno.play` | Command list, filtered by what you can run |
 | `/uno start [bots]` | `uno.play` | Deal a hand to everyone seated at your table |
 | `/uno version` | `uno.play` | Plugin version |
 | `/gamble …` | `uno.gamble` | Wagering — see above (aliases: `/bet`, `/ante`, `/letitride`) |
 | `/uno give table` | `uno.admin` | Get a placeable Casino Table |
-| `/uno remove` | `uno.admin` | Remove the nearest table within 5 blocks |
-| `/uno reload` | `uno.admin` | Reload `config.yml` |
+| `/uno remove` | `uno.admin` | Remove the nearest table within 5 blocks (refused mid-hand) |
+| `/uno list` | `uno.admin` | Every placed table: id, world, coordinates, occupancy |
+| `/uno info` | `uno.admin` | Running hands and open pots |
+| `/uno tp <id>` | `uno.admin` | Teleport to a table |
+| `/uno end <player\|all>` | `uno.admin` | Force a stuck hand to finish (any pot is refunded) |
+| `/uno refund <player\|all>` | `uno.admin` | Hand a stuck pot back to its stakers |
+| `/uno reload` | `uno.admin` | Re-read `config.yml` and `messages.yml` |
 | `/uno play [bots]` | `uno.admin` | Solo test game against bots, no table needed |
-| `/uno fan [cards…]`, `/uno fanclear` | `uno.admin` | Debug: show/hide a hand fan |
-| `/uno hand` | `uno.admin` | Debug: the static 7-card hand item |
-| `/uno testcards [cards…]`, `/uno cleartest` | `uno.admin` | Debug: spawn/remove a card gallery |
+
+With `debug: true` in `config.yml`, five throwaway development commands also become available:
+`/uno fan`, `/uno fanclear`, `/uno hand`, `/uno testcards`, `/uno cleartest`. They spawn per-tick
+display entities and are not meant for a live server.
 
 Defaults: `uno.play` and `uno.gamble` are on for everyone, `uno.admin` is op-only.
 
 ## Configuration
 
-`plugins/UNO/config.yml`. **Only the `gambling.*` keys are currently implemented** — `game.*`,
-`tables.*`, `dealer.*`, `debug` and `resource-pack.*` are placeholders for planned features and have
-no effect yet.
+`plugins/UNO/config.yml` — every key in it is read by the plugin; if setting one changes nothing,
+that's a bug. `/uno reload` re-reads it live. Highlights:
 
 ```yaml
+game:
+  starting-hand-size: 7        # clamped so the deal can't empty the deck
+  turn-timeout-seconds: 60     # idle player's turn is played for them (0 = never)
+tables:
+  max-per-world: 0             # cap tables per world (0 = unlimited)
 gambling:
-  enabled: true
-  ante-seconds: 300          # ante expires and refunds after this (0 = never)
+  ante-seconds: 300            # ante expires and refunds after this (0 = never)
+  audit-log: true              # append every item movement to bets.log
+  limits:
+    max-pot-items: 0           # cap the pot (0 = unlimited)
+    min-ante-items: 1          # minimum buy-in
+    block-containers: true     # no staking a shulker box full of netherite
+    blacklist: [SHULKER_BOX, BUNDLE]
   ride:
-    enabled: true            # offer the winner cash-out vs. let-it-ride
-    window-seconds: 20       # winner's decision window (no answer = cash out)
-    challenge-seconds: 90    # how long the table has to match a riding pot
+    window-seconds: 20         # winner's decision window (no answer = cash out)
+    challenge-seconds: 90      # how long the table has to match a riding pot
 ```
+
+Player-facing text lives in `plugins/UNO/messages.yml` (MiniMessage formatting) — reword, restyle
+or translate anything. Keys you leave out fall back to the copy shipped in the jar.
 
 State the plugin persists, in `plugins/UNO/`:
 
-- `tables.yml` — placed tables (position, facing, type).
-- `escrow.yml` — items held for staked or unfinished bets.
+- `tables.yml` — placed tables (position, facing, type). Tables in worlds that aren't loaded yet are
+  preserved verbatim, not dropped.
+- `escrow/<uuid>.yml` — items held for staked or unfinished bets, one file per owner.
+- `bets.log` — append-only audit trail of every stake, payout, refund and forfeit.
 
 ## Building from source
 
 ```bash
-mvn clean package       # -> target/uno-1.0.jar
+mvn clean package       # -> target/uno-1.0.jar  (runs the tests)
+mvn test                # rules-layer tests only
 ```
 
 Needs JDK 25 and Maven. `paper-api` is a `provided` dependency, supplied by the server at runtime.
-There is no test suite — changes are verified by running a Paper 26.2 server.
+
+`Card`, `Deck` and `UnoGame` are pure Java with no Bukkit imports, and are covered by JUnit tests in
+`src/test/java` — including the invariant that a game always holds exactly one 108-card deck, wherever
+the cards happen to be. Everything else needs a running Paper 26.2 server to verify.
 
 ### Repository layout
 
 ```
 src/main/java/com/unoplugin/
-  UnoPlugin.java        plugin entry point, command routing, manager wiring
+  UnoPlugin.java        plugin entry point, manager wiring
+  command/              UnoCommand + GambleCommand (routing, permissions, tab completion)
   game/                 UnoGame (pure rules), Card, Deck, GameManager, PileRenderer
   hand/HandManager      the held 3D card fan + all player input while it's up
   table/                UnoTable/CasinoTable geometry, TableManager (placement, seats, visuals)
-  bet/                  BetManager, BetSession, EscrowStore, PotRenderer
-  debug/CardTester      throwaway visual test helpers
+  bet/                  BetManager, BetSession, EscrowStore, PotRenderer, BetLog
+  util/                 Settings (config), Messages (messages.yml), NameCache, ResourcePackSender
+  debug/CardTester      throwaway visual test helpers, gated behind `debug: true`
+
+src/test/java/com/unoplugin/game/   JUnit tests for the rules layer
 
 resourcepack/
   assets/minecraft/textures/item/cards/   the card art (hand-authored PNGs)
@@ -161,8 +194,9 @@ resourcepack/
 ```
 
 Card art is authored by hand; everything under `assets/uno/` is generated from it by the scripts
-above and shouldn't be edited directly. `generate_held_fan.py` shares constants with `HandManager`
-(slot count and fan density tiers) — the two have to be changed together.
+above and shouldn't be edited directly. `generate_held_fan.py` reads its slot count and fan density
+tiers straight out of `HandManager.java`, so the two can't drift apart — change them in the Java and
+re-run the generator.
 
 ## Contributing
 

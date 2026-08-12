@@ -1,24 +1,33 @@
 package com.unoplugin.hand;
 
+import com.unoplugin.util.Messages;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Input;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.PlayerDeathEvent;
+import org.bukkit.event.inventory.ClickType;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerAnimationEvent;
 import org.bukkit.event.player.PlayerAnimationType;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerItemHeldEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.components.CustomModelDataComponent;
 import org.bukkit.plugin.Plugin;
@@ -37,36 +46,24 @@ import java.util.UUID;
  * <p>The fan shows ALL the cards the player holds; as the hand grows it COMPRESSES so
  * everything fits (density tiers, picked from the card count). The held item
  * ({@code uno:held}) is a composite model whose slots are switched live via
- * {@code custom_model_data} (card + tier + selected). A/D scroll the selection — polled
- * every tick so inputs are never dropped. Held viewmodel -> no lag, no clipping.
+ * {@code custom_model_data}. A/D scroll the selection — polled every tick so inputs are
+ * never dropped. Held viewmodel -> no lag, no clipping.
+ *
+ * <p><strong>The fan never costs a player an item.</strong> It claims an empty hotbar slot
+ * where it can; only when the whole inventory is full does it move something aside, and
+ * that stack is given back when the hand ends, on death, or on quit.
  */
 public final class HandManager implements Listener {
 
-    /** Must match generate_held_fan.py. */
+    /** Must match generate_held_fan.py (which reads these two constants out of this file). */
     private static final int MAX_SLOTS = 21;
     /** Per-card angular step for each density tier (must match DENSITIES in the generator). */
     private static final double[] DENSITIES = {19.0, 10.0, 5.0};
     /** Total fan spread allowed on screen; the tier is the widest one that fits this. */
     private static final double MAX_SPAN = 135.0;
     private static final NamespacedKey HELD_MODEL = new NamespacedKey("uno", "held");
-
-    /** Full 54-card deck, used for test draws (Step 6 replaces this with the real deck). */
-    private static final List<String> DECK = buildDeck();
-
-    private static List<String> buildDeck() {
-        List<String> deck = new ArrayList<>();
-        for (String colour : new String[]{"red", "green", "blue", "yellow"}) {
-            for (int i = 0; i <= 9; i++) {
-                deck.add(colour + "_" + i);
-            }
-            deck.add(colour + "_skip");
-            deck.add(colour + "_reverse");
-            deck.add(colour + "_draw2");
-        }
-        deck.add("wild");
-        deck.add("wild_draw4");
-        return deck;
-    }
+    /** Left-click and interact events double-fire; ignore the echo. */
+    private static final long INPUT_DEBOUNCE_MS = 150;
 
     /** Routes play/draw input into a game; returns true if a game handled it. */
     public interface CardActions {
@@ -76,12 +73,14 @@ public final class HandManager implements Listener {
     }
 
     private final Plugin plugin;
+    private final Messages messages;
     private final Map<UUID, Hand> hands = new HashMap<>();
     private final BukkitTask pollTask;
     private CardActions cardActions;
 
-    public HandManager(Plugin plugin) {
+    public HandManager(Plugin plugin, Messages messages) {
         this.plugin = plugin;
+        this.messages = messages;
         this.pollTask = plugin.getServer().getScheduler().runTaskTimer(plugin, this::poll, 1L, 1L);
     }
 
@@ -95,9 +94,11 @@ public final class HandManager implements Listener {
         List<String> cards;
         int selected;
         int fanSlot;   // the hotbar slot the fan item lives in (so the wheel can't move it)
+        /** What used to be in that slot, when the inventory was too full to move it aside. */
+        ItemStack displaced;
         boolean lastLeft;
         boolean lastRight;
-        long lastPlayMs;   // debounce double-fired left-click swing events
+        long lastPlayMs;
         long lastDrawMs;
 
         Hand(Player player, List<String> cards) {
@@ -109,20 +110,83 @@ public final class HandManager implements Listener {
 
     /** Show (or refresh) a player's hand as the held fan (any size). */
     public void show(Player player, List<String> cards) {
-        Hand hand = hands.computeIfAbsent(player.getUniqueId(), k -> new Hand(player, new ArrayList<>()));
+        Hand hand = hands.get(player.getUniqueId());
+        boolean fresh = hand == null;
+        if (fresh) {
+            hand = new Hand(player, new ArrayList<>());
+            hands.put(player.getUniqueId(), hand);
+            claimSlot(hand);
+        }
+        // Only sweep the inventory when the cards themselves changed — not on every A/D press.
+        boolean contentsChanged = fresh || !hand.cards.equals(cards);
         hand.cards = new ArrayList<>(cards);
-        hand.fanSlot = player.getInventory().getHeldItemSlot(); // anchor to the current hotbar slot
         if (hand.selected >= hand.cards.size()) {
             hand.selected = Math.max(0, hand.cards.size() - 1);
         }
-        updateItem(hand);
+        updateItem(hand, contentsChanged);
     }
 
-    /** Hide a player's hand (clears the held item). */
+    /** Hide a player's hand: clear the fan and give back anything it displaced. */
     public void hide(Player player) {
         Hand hand = hands.remove(player.getUniqueId());
-        if (hand != null && isHeldItem(player.getInventory().getItem(hand.fanSlot))) {
-            player.getInventory().setItem(hand.fanSlot, null);
+        if (hand == null) {
+            return;
+        }
+        clearStrayFans(player, -1);
+        restoreDisplaced(player, hand);
+    }
+
+    /**
+     * Pick the hotbar slot the fan will live in, without destroying anything.
+     *
+     * <p>Order of preference: the slot they're already holding if it's empty, then any empty
+     * hotbar slot, then move the held stack into free inventory space. Only a completely full
+     * inventory forces us to hold the stack aside, and that is handed back in
+     * {@link #restoreDisplaced}.
+     */
+    private void claimSlot(Hand hand) {
+        Player player = hand.player;
+        PlayerInventory inv = player.getInventory();
+        restoreDisplaced(player, hand); // never stack two displacements
+
+        int current = inv.getHeldItemSlot();
+        if (isEmpty(inv.getItem(current))) {
+            hand.fanSlot = current;
+            return;
+        }
+        for (int slot = 0; slot < 9; slot++) {
+            if (isEmpty(inv.getItem(slot))) {
+                hand.fanSlot = slot;
+                inv.setHeldItemSlot(slot);
+                return;
+            }
+        }
+        // Hotbar full — shift what's in hand into the backpack.
+        ItemStack occupant = inv.getItem(current);
+        hand.fanSlot = current;
+        int free = inv.firstEmpty();
+        if (free >= 0) {
+            inv.setItem(free, occupant);
+            inv.setItem(current, null);
+            messages.send(player, "hand.slot-freed", "item", describe(occupant));
+            return;
+        }
+        // Nowhere to put it: keep it safe until the hand is over.
+        hand.displaced = occupant == null ? null : occupant.clone();
+        inv.setItem(current, null);
+        messages.send(player, "hand.slot-freed", "item", describe(occupant));
+    }
+
+    /** Give back the stack the fan pushed out of its slot, if there was one. */
+    private void restoreDisplaced(Player player, Hand hand) {
+        ItemStack back = hand.displaced;
+        if (back == null) {
+            return;
+        }
+        hand.displaced = null;
+        Map<Integer, ItemStack> leftover = player.getInventory().addItem(back);
+        for (ItemStack overflow : leftover.values()) {
+            player.getWorld().dropItemNaturally(player.getLocation(), overflow);
         }
     }
 
@@ -149,12 +213,12 @@ public final class HandManager implements Listener {
             hand.lastLeft = left;
             hand.lastRight = right;
             if (changed) {
-                updateItem(hand);
+                updateItem(hand, false);
             }
         }
     }
 
-    /** True if the player currently has an active hand fan (in a game / test). */
+    /** True if the player currently has an active hand fan. */
     public boolean isActive(Player player) {
         return hands.containsKey(player.getUniqueId());
     }
@@ -165,59 +229,39 @@ public final class HandManager implements Listener {
             return;
         }
         hand.selected = Math.max(0, Math.min(hand.cards.size() - 1, hand.selected + dir));
-        updateItem(hand);
+        updateItem(hand, false);
     }
 
-    /**
-     * Play the selected card. Step-5 stub: removes it from the hand and re-renders.
-     * Step 6 will validate the move, animate the card to the discard pile, advance the turn.
-     */
+    /** Play the selected card. Does nothing unless a game picks it up. */
     public void playSelected(Player player) {
         Hand hand = hands.get(player.getUniqueId());
         if (hand == null || hand.cards.isEmpty()) {
             return;
         }
         long now = System.currentTimeMillis();
-        if (now - hand.lastPlayMs < 150) {
-            return; // left-click swing fires twice — ignore the duplicate
+        if (now - hand.lastPlayMs < INPUT_DEBOUNCE_MS) {
+            return;
         }
         hand.lastPlayMs = now;
-        if (cardActions != null && cardActions.play(player, hand.selected)) {
-            return; // a game handled the play (and re-rendered)
-        }
-        // Fallback test stub (no active game): just remove the selected card.
-        String played = hand.cards.remove(hand.selected);
-        if (hand.selected >= hand.cards.size()) {
-            hand.selected = Math.max(0, hand.cards.size() - 1);
-        }
-        player.sendMessage("§a▶ Played §f" + played);
-        if (hand.cards.isEmpty()) {
-            player.sendMessage("§6§lUNO! §rYour hand is empty.");
-            hide(player);
-        } else {
-            updateItem(hand);
+        if (cardActions != null) {
+            cardActions.play(player, hand.selected);
         }
     }
 
-    /** Draw a card. Step-5 stub: adds a random card and re-renders. */
+    /** Draw a card. Does nothing unless a game picks it up. */
     public void drawCard(Player player) {
         Hand hand = hands.get(player.getUniqueId());
         if (hand == null) {
             return;
         }
         long now = System.currentTimeMillis();
-        if (now - hand.lastDrawMs < 150) {
-            return; // ignore duplicate interact events
+        if (now - hand.lastDrawMs < INPUT_DEBOUNCE_MS) {
+            return;
         }
         hand.lastDrawMs = now;
-        if (cardActions != null && cardActions.draw(player)) {
-            return; // a game handled the draw
+        if (cardActions != null) {
+            cardActions.draw(player);
         }
-        // Fallback test stub (no active game): add a random card.
-        String card = DECK.get((int) (Math.random() * DECK.size()));
-        hand.cards.add(card);
-        player.sendMessage("§e+ Drew §f" + card);
-        updateItem(hand);
     }
 
     /** Widest density tier whose total spread fits MAX_SPAN for n cards. */
@@ -231,8 +275,14 @@ public final class HandManager implements Listener {
         return DENSITIES.length - 1;
     }
 
-    /** Rebuild the custom_model_data strings and put the fan in the player's hand. */
-    private void updateItem(Hand hand) {
+    /**
+     * Rebuild the custom_model_data strings and put the fan in the player's hand.
+     *
+     * @param sweep clear duplicate fan items from the rest of the inventory. Only worth doing
+     *              when the hand contents changed — scanning 41 slots on every A/D press is
+     *              pure waste.
+     */
+    private void updateItem(Hand hand, boolean sweep) {
         int n = hand.cards.size();
         int tier = chooseTier(Math.min(n, MAX_SLOTS));
         List<String> strings = new ArrayList<>(Collections.nCopies(MAX_SLOTS, ""));
@@ -263,37 +313,98 @@ public final class HandManager implements Listener {
         meta.displayName(Component.text("UNO Hand"));
         item.setItemMeta(meta);
 
-        hand.player.getInventory().setItem(hand.fanSlot, item); // always write to the fixed fan slot
-        clearStrayFans(hand.player, hand.fanSlot);              // never leave duplicate fan items around
+        hand.player.getInventory().setItem(hand.fanSlot, item); // always the fixed fan slot
+        if (sweep) {
+            clearStrayFans(hand.player, hand.fanSlot);
+        }
         if (n > 0) {
-            hand.player.sendActionBar(Component.text("§7Selected: §f" + hand.cards.get(hand.selected)
-                    + " §8(" + (hand.selected + 1) + "/" + n + ")"));
+            messages.actionBar(hand.player, "hand.selected",
+                    "card", hand.cards.get(hand.selected),
+                    "index", hand.selected + 1,
+                    "count", n);
         }
     }
 
-    private boolean isHeldItem(ItemStack stack) {
+    private static boolean isEmpty(ItemStack stack) {
+        return stack == null || stack.getType().isAir() || stack.getAmount() <= 0;
+    }
+
+    /** True if this stack is a UNO hand fan (wherever it turned up). */
+    public boolean isHeldItem(ItemStack stack) {
         if (stack == null || stack.getType() != Material.PAPER || !stack.hasItemMeta()) {
             return false;
         }
         return HELD_MODEL.equals(stack.getItemMeta().getItemModel());
     }
 
-    /** Remove any UNO-hand items anywhere except the one slot the fan lives in. */
+    /** Remove any UNO-hand items anywhere except {@code keepSlot} ({@code -1} = all of them). */
     private void clearStrayFans(Player player, int keepSlot) {
-        var inv = player.getInventory();
+        PlayerInventory inv = player.getInventory();
         for (int i = 0; i < inv.getSize(); i++) {
             if (i != keepSlot && isHeldItem(inv.getItem(i))) {
                 inv.setItem(i, null);
             }
         }
+        if (isHeldItem(inv.getItemInOffHand())) {
+            inv.setItemInOffHand(null);
+        }
     }
+
+    private static String describe(ItemStack stack) {
+        if (stack == null) {
+            return "item";
+        }
+        String raw = stack.getType().name().toLowerCase().replace('_', ' ');
+        return Character.toUpperCase(raw.charAt(0)) + raw.substring(1);
+    }
+
+    // ------------------------------------------------------------------ lifecycle
 
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
-        hands.remove(event.getPlayer().getUniqueId());
+        Hand hand = hands.remove(event.getPlayer().getUniqueId());
+        if (hand != null) {
+            clearStrayFans(event.getPlayer(), -1);
+            restoreDisplaced(event.getPlayer(), hand);
+        }
     }
 
-    // --- Step 5 input: scroll wheel + play (left-click / Q) + draw (right-click / F) ----
+    /**
+     * Dying must not scatter a 21-card fan on the ground for anyone to pick up — and must not
+     * quietly keep a stack the fan had moved aside, which vanilla would have dropped.
+     */
+    @EventHandler(priority = EventPriority.LOW)
+    public void onDeath(PlayerDeathEvent event) {
+        Hand hand = hands.get(event.getEntity().getUniqueId());
+        if (hand == null) {
+            return;
+        }
+        event.getDrops().removeIf(this::isHeldItem);
+        if (hand.displaced != null && !event.getKeepInventory()) {
+            event.getDrops().add(hand.displaced); // exactly as if it had still been in the slot
+            hand.displaced = null;
+        }
+    }
+
+    /** Respawning wipes the inventory; put the fan back where the player can see it. */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onRespawn(PlayerRespawnEvent event) {
+        Player player = event.getPlayer();
+        if (!isActive(player)) {
+            return;
+        }
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            Hand hand = hands.get(player.getUniqueId());
+            if (hand == null || !player.isOnline()) {
+                return;
+            }
+            clearStrayFans(player, -1);
+            claimSlot(hand);
+            updateItem(hand, true);
+        });
+    }
+
+    // ---------------------------------------------------------------------- input
 
     /** Mouse wheel = scroll the selection (kept on the fan item by cancelling the slot change). */
     @EventHandler
@@ -317,6 +428,17 @@ public final class HandManager implements Listener {
     public void onLeftClickPlay(PlayerAnimationEvent event) {
         if (event.getAnimationType() == PlayerAnimationType.ARM_SWING && isActive(event.getPlayer())) {
             playSelected(event.getPlayer());
+        }
+    }
+
+    /**
+     * That same left-click is also a punch. Playing a card must not deal damage to whoever
+     * happens to be standing in front of you.
+     */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onAttackWhileHolding(EntityDamageByEntityEvent event) {
+        if (event.getDamager() instanceof Player attacker && isActive(attacker)) {
+            event.setCancelled(true);
         }
     }
 
@@ -366,10 +488,58 @@ public final class HandManager implements Listener {
         }
     }
 
-    /** Tear down all hands (plugin disable). */
+    // ------------------------------------------------------------- fan protection
+
+    /**
+     * The fan is a real item in a real inventory, so without this a player can shift-click
+     * their hand into a chest. Nothing may move a fan item, ever — including a stray one that
+     * outlived its game.
+     */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onInventoryClick(InventoryClickEvent event) {
+        if (isHeldItem(event.getCurrentItem()) || isHeldItem(event.getCursor())) {
+            event.setCancelled(true);
+            return;
+        }
+        if (!(event.getWhoClicked() instanceof Player player)) {
+            return;
+        }
+        // Number-key and offhand swaps move a slot the click itself never touches.
+        if (event.getClick() == ClickType.NUMBER_KEY && event.getHotbarButton() >= 0
+                && isHeldItem(player.getInventory().getItem(event.getHotbarButton()))) {
+            event.setCancelled(true);
+            return;
+        }
+        if (event.getClick() == ClickType.SWAP_OFFHAND
+                && isHeldItem(player.getInventory().getItemInOffHand())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onInventoryDrag(InventoryDragEvent event) {
+        if (isHeldItem(event.getOldCursor())) {
+            event.setCancelled(true);
+            return;
+        }
+        for (ItemStack dragged : event.getNewItems().values()) {
+            if (isHeldItem(dragged)) {
+                event.setCancelled(true);
+                return;
+            }
+        }
+    }
+
+    /** Tear down all hands (plugin disable), returning anything the fans displaced. */
     public void shutdown() {
         if (pollTask != null) {
             pollTask.cancel();
+        }
+        for (Hand hand : new ArrayList<>(hands.values())) {
+            if (hand.player.isOnline()) {
+                clearStrayFans(hand.player, -1);
+                restoreDisplaced(hand.player, hand);
+            }
         }
         hands.clear();
     }

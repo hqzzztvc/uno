@@ -32,15 +32,28 @@ Two halves that must stay in sync:
 
 ## Build & dev loop
 
-Requires **JDK 25** (Paper 26.2 is class-file v69) and Maven. Neither is currently installed on this
-machine — check before assuming a build will run.
+Requires **JDK 25** (Paper 26.2 is class-file v69) and Maven. Both are installed via scoop
+(`temurin25-jdk`, `maven`); scoop puts the JDK on PATH directly rather than shimming it, so if
+`java` isn't found, source this:
+
+```bash
+export JAVA_HOME="$HOME/scoop/apps/temurin25-jdk/current"
+export PATH="$JAVA_HOME/bin:$HOME/scoop/apps/maven/current/bin:$PATH"
+```
 
 ```bash
 mvn clean package          # -> target/uno-1.0.jar   (paper-api is `provided`, not bundled)
+mvn test                   # rules-layer tests only
 mvn -q -o clean package    # offline, quiet
 ```
 
-There is **no test suite and no linter**. Verification means running a Paper 26.2 server:
+`Card`, `Deck` and `UnoGame` are pure Java (no Bukkit imports) and covered by JUnit in
+`src/test/java`. The load-bearing test is `totalCards()`: **a game always holds exactly 108 cards**,
+wherever they are. Both historical card-accounting bugs — `start()` discarding the action cards it
+flipped past, and `Deck.draw()` rebuilding itself while players held cards — show up as that count
+drifting. Add to those tests before touching the rules.
+
+There is no linter. Everything outside the rules layer needs a Paper 26.2 server to verify:
 
 ```bash
 cp target/uno-1.0.jar server/plugins/uno-1.0.jar
@@ -48,10 +61,19 @@ cd resourcepack && zip -qr ../UNO-pack.zip pack.mcmeta assets -x '*.DS_Store'
 # then copy UNO-pack.zip into the *client's* resourcepacks folder and enable it
 ```
 
-The plugin does **not** serve the pack. `resource-pack.serve-mode` in `config.yml` is logged on enable
-and otherwise ignored — the zip is installed client-side by hand. Same for most of `config.yml`: only
-the `gambling.*` keys are actually read (`BetManager`). `game.*`, `tables.*`, `dealer.*` and `debug`
-are aspirational and have no code behind them; don't assume changing them does anything.
+The plugin does **not** host the pack. It will *offer* one if `resource-pack.url.link` points at a zip
+you host yourself (`ResourcePackSender`); otherwise the zip is installed client-side by hand.
+
+**Every key in `config.yml` is read**, all of it through `util/Settings` — that class is the only
+place in the plugin that touches `getConfig()`, so "is this key wired up?" is answerable by reading
+one file. If you add a key, add it there too; if you delete code, delete the key. `/uno reload`
+re-reads both `config.yml` and `messages.yml`.
+
+Player-facing strings all live in `src/main/resources/messages.yml` and go through `util/Messages`
+(MiniMessage). There are **no `§` codes and no `sendMessage(String)` calls** left in the source —
+keep it that way. The jar's copy of `messages.yml` is registered as the defaults, so an admin's file
+only needs the keys they changed. Placeholder values are inserted unparsed, so a player named
+`<red>oops` can't inject formatting into a broadcast.
 
 ## Regenerating pack assets
 
@@ -65,16 +87,24 @@ cd resourcepack
 python3 generate_held_fan.py  # the ~6800-file uno:held composite fan (assets/uno/models/item/held/)
 ```
 
-- `generate_held_fan.py` **must stay in lockstep with `HandManager`**: `MAX_SLOTS = 21` and
-  `DENSITIES = {19.0, 10.0, 5.0}` are duplicated in both files. Changing one without the other
-  silently produces empty or wrong-angle cards.
+- `generate_held_fan.py` **reads `MAX_SLOTS` and `DENSITIES` out of `HandManager.java`** (see
+  `java_constants()`) — the Java file is the single source of truth and the two can no longer drift.
+  Change them in the Java, then re-run the generator. If those fields are ever renamed, update the
+  regexes in `java_constants()` or the script exits with a clear message rather than emitting
+  wrong-angle cards.
+- The three density tiers all earn their place: `chooseTier` picks tier 0 for hands up to 8 cards,
+  tier 1 for 9-14 and tier 2 for 15+. Dropping one either overflows the screen on big hands or
+  cramps small ones.
 - `generate_hand_model.sh` builds the static 7-card `uno:hand` item used only by the `/uno hand` debug
-  command; it is not part of gameplay.
+  command; it is not part of gameplay. All five `CardTester`/fan debug commands require both
+  `uno.admin` **and** `debug: true` in config.yml — they spawn per-tick display entities and have no
+  business on a live server.
 - `generate_card_font.py` is **dead code** — an abandoned HUD-font approach. Its outputs
   (`assets/uno/font/`, `assets/uno/textures/font/`) are not in the pack and `HandFont.java` was deleted.
 - The flat table-pile models (`assets/uno/models/item/cards_flat/`) have no checked-in generator; they
   were produced ad hoc. Add new ones by copying an existing pair.
 - `cards_textures_backup/` at the repo root is a stale copy of the card art, not used by the build.
+  It is **untracked and gitignored** — still on disk, no longer in the repo. Same for `.DS_Store`.
 
 ## Card naming is the universal ID
 
@@ -83,7 +113,7 @@ key, and the string passed around between subsystems. Every card exists in three
 
 | Key | Model | Used by |
 |---|---|---|
-| `uno:<card>` | upright, front + `back.png` reverse | `CardTester` debug fan |
+| `uno:<card>` | upright, front + `back.png` reverse | `CardTester` debug fan (`debug: true` only) |
 | `uno:flat_<card>` / `uno:down_<card>` | lying flat, face-up / face-down | `PileRenderer` (table piles) |
 | `uno:held` | one composite item, 21 select-slots | `HandManager` (the held fan) |
 
@@ -99,13 +129,25 @@ dependencies are circular:
 ```
 TableManager ──────────────► GameManager ──────────────► BetManager
  (tables, seats, visuals)     (games, bots, rendering)    (pots, escrow)
-                                    ▲                          │
-        HandManager ────────────────┘  (CardActions)           │
-         (held fan, input)      ◄── GameListener ──────────────┘
+      ▲                             ▲                          │
+      │      HandManager ───────────┘  (CardActions)           │
+      │       (held fan, input)   ◄── GameListener ────────────┘
+      └── BusyCheck: "is a hand or a pot running at this table?" ──┘
+
+util/  Settings (all config)  Messages (all text)  NameCache (UUID→name, never blocks)
+command/  UnoCommand (routing + permissions + tab completion), GambleCommand
 ```
 
-- **`UnoGame`** is pure rules — hands, deck, turn order, direction, active colour, legality, win. No
-  Bukkit calls except name lookup. All rendering, chat, bots and scheduling live in `GameManager`.
+`BusyCheck` is why a table can't be removed out from under a running hand: `UnoPlugin` wires it to
+`gameManager.hasGameAtTable(id) || betManager.hasSessionAtTable(id)`.
+
+- **`UnoGame`** is pure rules — hands, deck, turn order, direction, active colour, legality, win.
+  **Zero Bukkit imports** (that's what makes it testable); it resolves names through an injected
+  `namer`. All rendering, chat, bots and scheduling live in `GameManager`. Its `id()` is the *game*
+  id, not a table id — `GameManager.tableOfGame()` maps a game to the table it's being played at.
+- **`Deck.draw()` returns `null` when there is genuinely nothing left.** It must never rebuild
+  itself: players are holding cards from the current deck, so a rebuild puts a second copy of every
+  one of them into play. Callers treat null as "no card — the turn just passes".
 - **`GameManager`** implements `HandManager.CardActions` (input → rules) and owns the bossbar, the
   wild-colour inventory GUI, the `PileRenderer`, and the bots. Bots are plain random `UUID`s in the
   `bots` set with no `Player` behind them — every loop that touches players must skip them.
@@ -120,20 +162,50 @@ All visuals are `ItemDisplay` / `BlockDisplay` / `TextDisplay` / `Interaction` e
 the chunk; `TableManager` respawns them on `ChunkLoadEvent` and clears `entityIds` on unload. Only
 logical state is persisted:
 
-- `plugins/UNO/tables.yml` — table id, type, world, x/y/z, yaw.
-- `plugins/UNO/escrow.yml` — staked items, keyed by owner.
+- `plugins/UNO/tables.yml` — table id, type, world, x/y/z, yaw. A table whose world isn't loaded
+  when the plugin enables (the Multiverse case) is held in `TableManager.pending` and **written back
+  verbatim on save**, then built if `WorldLoadEvent` brings its world up. Dropping it from the map
+  instead means the next `save()` erases it from disk forever.
+- `plugins/UNO/escrow/<uuid>.yml` — staked items, one file per owner, so a stake costs one small
+  synchronous write rather than re-serialising everything the server holds. A legacy single-file
+  `escrow.yml` is imported on first run and renamed to `escrow.yml.imported`.
+- `plugins/UNO/bets.log` — append-only audit trail (`BetLog`), written on a background thread and
+  drained on disable. Evidence, not state; escrow is the source of truth.
 
 Card models are authored *already lying flat* precisely so `PileRenderer` can spawn them with **no
 rotation**; a render-time `rotateX` swings the card off its spawn point and drops it under the table.
-Don't "fix" the missing rotation. The felt surface constant `0.757` is duplicated in `GameManager`
-(`surfaceY`) and `BetManager` (`SURFACE_Y`).
+Don't "fix" the missing rotation. The felt surface height lives once, in `UnoTable.SURFACE_Y`.
+
+`TableManager` indexes tables by packed chunk coordinate (`byChunk`), because chunk load/unload is one
+of the hottest events on a busy server and scanning every table on each one is pure waste. Keep the
+index in step in `register()` / `remove()`.
+
+When the discard pile hits `DISCARD_MAX`, `PileRenderer` clears it and starts a fresh stack rather
+than teleporting the other nine cards down a step. The alternative costs ten entity moves to every
+nearby player on *every* card played; this costs ten removals once per ten plays, and the top card —
+the one that is the live game state — is always the visible one.
 
 ### Input ownership
 
 While a player has an active fan, `HandManager` takes over their controls and cancels the vanilla
 behaviour: A/D polled every tick via `Player.getCurrentInput()`, scroll wheel (`PlayerItemHeldEvent`
 cancelled to pin the fan to one hotbar slot), left-click/Q = play, right-click/F = draw, block
-break/place blocked. Left-click and interact events double-fire, hence the 150 ms debounce.
+break/place blocked, and `EntityDamageByEntityEvent` cancelled (that left-click is also a punch —
+without this, playing a card hits whoever is in front of you). Left-click and interact events
+double-fire, hence the 150 ms debounce.
+
+**The fan must never cost a player an item.** `claimSlot()` prefers an empty hotbar slot, then moves
+the held stack into free inventory space, and only holds it in `Hand.displaced` when the inventory is
+completely full — which `hide()`, `onQuit()`, `onDeath()` and `shutdown()` all give back. `onDeath`
+also strips the fan from the drop list (else it lies on the ground as a pickup-able 21-card item) and
+adds any displaced stack to the drops, so death behaves exactly as if the fan had never moved it.
+
+`InventoryClickEvent` / `InventoryDragEvent` cancel anything touching a fan item anywhere — including
+number-key and offhand swaps, and including stray fans from a finished game. Without it a player can
+shift-click their hand into a chest.
+
+`show()` only re-sweeps the inventory for stray fans when the *cards* changed, not on every A/D press
+— that sweep walks all 41 slots.
 
 Event-priority coupling: `BetManager.onDrop` runs at `HIGH, ignoreCancelled = true` specifically so
 `HandManager`'s NORMAL-priority cancel of Q-to-play is seen first — otherwise a player would stake
@@ -141,8 +213,16 @@ their own cards. `isPluginItem()` is the second line of defence.
 
 ### Wagering invariants
 
-- **escrow.yml is the source of truth.** A staked item leaves the inventory, so `EscrowStore` writes
-  the file synchronously on every stake, refund and payout. Never let a stake live only in RAM.
+- **escrow is the source of truth.** A staked item leaves the inventory, so `EscrowStore` writes to
+  disk synchronously on every stake, refund and payout. Never let a stake live only in RAM.
+- **`shutdown()` deliberately does not refund.** Mutating player inventories while the server is
+  stopping races the save that persists them, so whether the items survive is down to timing. Doing
+  nothing leaves them in escrow, which is the path a `kill -9` takes anyway: returned on next join.
+- **Every refusal in `onDrop` must cancel the event.** Messaging the player and returning lets the
+  item really hit the ground, where it despawns or gets picked up by a passer-by.
+- A challenge window that expires must always leave the session *resolved* — refund whoever never
+  locked in, then either deal or pay the rider. Leaving it parked in `ANTE` with no timer armed holds
+  everyone's items until the server restarts (`resolveChallenge`).
 - **Quitting mid-hand is forfeiting**, not a refund — the stake stays in the pot (`BetSession.forfeit`
   removes you from `live` but deliberately leaves attribution in `stakes`, so a crash still refunds).
   Quitting during the ante, before the deal, does refund.
@@ -152,6 +232,9 @@ their own cards. `isPluginItem()` is the second line of defence.
 
 ## Paper version notes
 
-`pom.xml` targets `paper-api 26.2.build.111-stable` while `plugin.yml` declares `api-version: '1.21'`.
+`pom.xml` targets `paper-api 26.2.build.111-stable` and `plugin.yml` declares `api-version: '26.2'`
+to match — an older declaration makes Paper apply legacy-material compatibility this doesn't want.
+Bump both together.
+
 There is a pending 26.3 migration marked by `TODO(26.3)` in `TableManager`: swap `SEAT_CUSHION` from
 `Material.RED_WOOL` to the real `Material.CUSHION` and bump the pom, once that drop ships.

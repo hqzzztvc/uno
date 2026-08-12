@@ -1,6 +1,8 @@
 package com.unoplugin.table;
 
 import com.unoplugin.UnoPlugin;
+import com.unoplugin.util.Messages;
+import com.unoplugin.util.Settings;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
@@ -29,6 +31,7 @@ import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.event.world.ChunkUnloadEvent;
+import org.bukkit.event.world.WorldLoadEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
@@ -43,6 +46,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -53,13 +57,37 @@ import java.util.UUID;
  */
 public class TableManager implements Listener {
 
+    /** Outcome of trying to place a table. */
+    public enum PlaceResult { OK, TOO_CLOSE, WORLD_LIMIT }
+
+    /** Lets the game/bet layers veto removing a table they're using. */
+    public interface BusyCheck {
+        boolean isBusy(UUID tableId);
+    }
+
     private final UnoPlugin plugin;
+    private final Messages messages;
+    private final Settings settings;
     private final Map<UUID, UnoTable> tables = new HashMap<>();
+    /**
+     * Tables whose world wasn't loaded when we read tables.yml. They are NOT dropped:
+     * they are written back verbatim on save and materialised if their world turns up.
+     */
+    private final List<PendingTable> pending = new ArrayList<>();
+    /** Chunk key -> tables in it, so chunk load/unload isn't a scan of every table. */
+    private final Map<Long, List<UnoTable>> byChunk = new HashMap<>();
+
     private final NamespacedKey itemKey;    // marks the placeable item with its type
     private final NamespacedKey idKey;       // tags spawned entities with their table id
     private final NamespacedKey seatKey;     // tags a seat interaction with its seat index
     private final NamespacedKey vehicleKey;  // tags the invisible seat mount
     private final File dataFile;
+
+    private BusyCheck busyCheck = id -> false;
+
+    /** A table we know about but can't build yet, because its world isn't loaded. */
+    private record PendingTable(String key, String type, String world,
+                                double x, double y, double z, double yaw) {}
 
     /**
      * Stool-cushion block. TODO(26.3): swap to {@code Material.CUSHION} — the new
@@ -79,13 +107,20 @@ public class TableManager implements Listener {
 
     private record Seated(UUID tableId, int index, UUID vehicleId) {}
 
-    public TableManager(UnoPlugin plugin) {
+    public TableManager(UnoPlugin plugin, Messages messages, Settings settings) {
         this.plugin = plugin;
+        this.messages = messages;
+        this.settings = settings;
         this.itemKey = new NamespacedKey(plugin, "uno_table_item");
         this.idKey = new NamespacedKey(plugin, "uno_table_id");
         this.seatKey = new NamespacedKey(plugin, "uno_seat_index");
         this.vehicleKey = new NamespacedKey(plugin, "uno_seat_vehicle");
         this.dataFile = new File(plugin.getDataFolder(), "tables.yml");
+    }
+
+    /** Wire in "is anything using this table right now?" (games and pots). */
+    public void setBusyCheck(BusyCheck busyCheck) {
+        this.busyCheck = busyCheck == null ? id -> false : busyCheck;
     }
 
     // ---------------------------------------------------------------- lifecycle
@@ -104,27 +139,71 @@ public class TableManager implements Listener {
             if (s == null) {
                 continue;
             }
+            String worldName = s.getString("world", "");
+            String type = s.getString("type", "CASINO");
+            double x = s.getDouble("x");
+            double y = s.getDouble("y");
+            double z = s.getDouble("z");
+            double yaw = s.getDouble("yaw");
             try {
                 UUID id = UUID.fromString(key);
-                UnoTable.Type type = UnoTable.Type.valueOf(s.getString("type", "CASINO"));
-                World world = Bukkit.getWorld(s.getString("world", ""));
+                UnoTable.Type parsedType = UnoTable.Type.valueOf(type);
+                World world = Bukkit.getWorld(worldName);
                 if (world == null) {
-                    plugin.getLogger().warning("Skipping table " + key
-                            + " (world '" + s.getString("world") + "' not loaded).");
+                    // Multiverse and friends load worlds AFTER plugins enable. Dropping the
+                    // table here would have it erased from disk by the next save().
+                    pending.add(new PendingTable(key, type, worldName, x, y, z, yaw));
                     continue;
                 }
-                Location anchor = new Location(world, s.getDouble("x"), s.getDouble("y"), s.getDouble("z"));
-                float yaw = (float) s.getDouble("yaw");
-                UnoTable table = create(type, id, anchor, yaw);
-                tables.put(id, table);
-                if (world.isChunkLoaded(anchor.getBlockX() >> 4, anchor.getBlockZ() >> 4)) {
-                    spawnVisuals(table);
-                }
+                register(create(parsedType, id, new Location(world, x, y, z), (float) yaw));
             } catch (IllegalArgumentException ex) {
-                plugin.getLogger().warning("Bad table entry '" + key + "': " + ex.getMessage());
+                plugin.getLogger().warning("Bad table entry '" + key + "': " + ex.getMessage()
+                        + " — keeping it on file untouched.");
+                pending.add(new PendingTable(key, type, worldName, x, y, z, yaw));
             }
         }
-        plugin.getLogger().info("Loaded " + tables.size() + " UNO table(s).");
+        plugin.getLogger().info("Loaded " + tables.size() + " UNO table(s)."
+                + (pending.isEmpty() ? "" : " " + pending.size()
+                + " waiting for their world to load (kept on file)."));
+    }
+
+    /** A world showed up late — build any tables that were waiting for it. */
+    @EventHandler
+    public void onWorldLoad(WorldLoadEvent event) {
+        if (pending.isEmpty()) {
+            return;
+        }
+        String name = event.getWorld().getName();
+        int built = 0;
+        for (Iterator<PendingTable> it = pending.iterator(); it.hasNext(); ) {
+            PendingTable p = it.next();
+            if (!p.world().equals(name)) {
+                continue;
+            }
+            try {
+                UnoTable table = create(UnoTable.Type.valueOf(p.type()), UUID.fromString(p.key()),
+                        new Location(event.getWorld(), p.x(), p.y(), p.z()), (float) p.yaw());
+                register(table);
+                it.remove();
+                built++;
+            } catch (IllegalArgumentException ex) {
+                plugin.getLogger().warning("Table '" + p.key() + "' is unreadable: " + ex.getMessage());
+            }
+        }
+        if (built > 0) {
+            plugin.getLogger().info("World '" + name + "' loaded — restored " + built + " UNO table(s).");
+        }
+    }
+
+    /** Add to the registry, index it by chunk, and build it if its chunk is loaded. */
+    private void register(UnoTable table) {
+        tables.put(table.id(), table);
+        indexChunk(table);
+        Location a = table.anchor();
+        World world = a.getWorld();
+        if (world != null && world.isChunkLoaded(a.getBlockX() >> 4, a.getBlockZ() >> 4)) {
+            spawnVisuals(table);
+        }
     }
 
     public void save() {
@@ -138,6 +217,17 @@ public class TableManager implements Listener {
             yml.set(base + ".y", a.getY());
             yml.set(base + ".z", a.getZ());
             yml.set(base + ".yaw", (double) t.yaw());
+        }
+        // Write back everything we couldn't resolve, exactly as we read it. Without this,
+        // placing one table erases every table in an unloaded world, permanently.
+        for (PendingTable p : pending) {
+            String base = "tables." + p.key();
+            yml.set(base + ".type", p.type());
+            yml.set(base + ".world", p.world());
+            yml.set(base + ".x", p.x());
+            yml.set(base + ".y", p.y());
+            yml.set(base + ".z", p.z());
+            yml.set(base + ".yaw", p.yaw());
         }
         try {
             if (!plugin.getDataFolder().exists()) {
@@ -170,31 +260,48 @@ public class TableManager implements Listener {
 
     private UnoTable create(UnoTable.Type type, UUID id, Location anchor, float yaw) {
         return switch (type) {
-            case CASINO -> new CasinoTable(id, anchor, yaw);
+            case CASINO -> new CasinoTable(id, anchor, yaw,
+                    settings.casinoMinPlayers(), settings.casinoMaxPlayers());
         };
     }
 
     // ------------------------------------------------------------ place / remove
 
     /** Place a table on top of the clicked block, oriented to the placer's facing. */
-    public boolean placeTable(UnoTable.Type type, Block clicked, Player placer) {
+    public PlaceResult placeTable(UnoTable.Type type, Block clicked, Player placer) {
         Location anchor = clicked.getLocation().add(0.5, 1.0, 0.5);
+        int limit = settings.maxTablesPerWorld();
+        if (limit > 0 && countIn(anchor.getWorld()) >= limit) {
+            return PlaceResult.WORLD_LIMIT;
+        }
         for (UnoTable other : tables.values()) {
             if (other.anchor().getWorld().equals(anchor.getWorld())
                     && other.anchor().distanceSquared(anchor) < 16) {
-                return false; // too close to an existing table
+                return PlaceResult.TOO_CLOSE; // too close to an existing table
             }
         }
         float yaw = snap(placer.getLocation().getYaw());
         UnoTable table = create(type, UUID.randomUUID(), anchor, yaw);
         tables.put(table.id(), table);
+        indexChunk(table);
         spawnVisuals(table);
         save();
-        return true;
+        return PlaceResult.OK;
     }
 
-    /** Remove the nearest table within {@code radius} of the player. */
-    public UnoTable removeNearest(Player player, double radius) {
+    /** How many tables are already in this world (for the per-world cap). */
+    public int countIn(World world) {
+        int n = 0;
+        for (UnoTable t : tables.values()) {
+            if (world.equals(t.anchor().getWorld())) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /** The nearest table within {@code radius}, or null. */
+    public UnoTable nearest(Player player, double radius) {
         UnoTable nearest = null;
         double best = radius * radius;
         for (UnoTable t : tables.values()) {
@@ -207,17 +314,63 @@ public class TableManager implements Listener {
                 nearest = t;
             }
         }
-        if (nearest != null) {
-            despawnVisuals(nearest);
-            tables.remove(nearest.id());
-            save();
-        }
         return nearest;
+    }
+
+    /** True if a hand or a pot is running at this table right now. */
+    public boolean isBusy(UUID tableId) {
+        return busyCheck.isBusy(tableId);
+    }
+
+    /**
+     * Tear a table down completely: stand everyone up, despawn every entity it owns, drop it
+     * from the registry and rewrite the file.
+     */
+    public void remove(UnoTable table) {
+        for (Map.Entry<UUID, Seated> e : new ArrayList<>(seated.entrySet())) {
+            if (e.getValue().tableId().equals(table.id())) {
+                Player p = Bukkit.getPlayer(e.getKey());
+                if (p != null) {
+                    leaveSeat(p);
+                } else {
+                    seated.remove(e.getKey());
+                }
+            }
+        }
+        despawnVisuals(table);
+        unindexChunk(table);
+        tables.remove(table.id());
+        save();
     }
 
     private float snap(float yaw) {
         float snapped = Math.round(yaw / 90f) * 90f;
         return (snapped % 360f + 360f) % 360f;
+    }
+
+    // ------------------------------------------------------------- chunk index
+
+    private static long chunkKey(int chunkX, int chunkZ) {
+        return ((long) chunkX << 32) | (chunkZ & 0xffffffffL);
+    }
+
+    private static long chunkKey(Location loc) {
+        return chunkKey(loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
+    }
+
+    private void indexChunk(UnoTable table) {
+        byChunk.computeIfAbsent(chunkKey(table.anchor()), k -> new ArrayList<>()).add(table);
+    }
+
+    private void unindexChunk(UnoTable table) {
+        long key = chunkKey(table.anchor());
+        List<UnoTable> here = byChunk.get(key);
+        if (here != null) {
+            here.remove(table);
+            if (here.isEmpty()) {
+                byChunk.remove(key);
+            }
+        }
     }
 
     // ----------------------------------------------------------------- visuals
@@ -247,7 +400,9 @@ public class TableManager implements Listener {
                     new Vector3f(0.26f, 0.42f, 0.26f), new Vector3f(-0.13f, 0f, -0.13f));
             spawnSeatInteraction(table, w, seat, i);
         }
-        spawnDealer(table, w);
+        if (settings.dealerEnabled()) {
+            spawnDealer(table, w);
+        }
         table.setSpawned(true);
     }
 
@@ -340,6 +495,7 @@ public class TableManager implements Listener {
         for (UUID eid : table.entityIds()) {
             Entity e = Bukkit.getEntity(eid);
             if (e != null) {
+                e.eject(); // a seat mount may still be carrying someone
                 e.remove();
             }
         }
@@ -357,7 +513,8 @@ public class TableManager implements Listener {
         meta.lore(List.of(
                 Component.text("Right-click the ground to place.", NamedTextColor.GRAY)
                         .decoration(TextDecoration.ITALIC, false),
-                Component.text("4-6 players · has the Fish Dealer",
+                Component.text(settings.casinoMinPlayers() + "-" + settings.casinoMaxPlayers()
+                                + " players · has the Fish Dealer",
                         NamedTextColor.DARK_GRAY).decoration(TextDecoration.ITALIC, false)));
         meta.getPersistentDataContainer().set(itemKey, PersistentDataType.STRING, type.name());
         meta.addItemFlags(ItemFlag.values());
@@ -394,26 +551,27 @@ public class TableManager implements Listener {
         Player player = event.getPlayer();
         UnoTable.Type type = UnoTable.Type.valueOf(typeName);
 
-        if (placeTable(type, clicked, player)) {
-            if (player.getGameMode() != GameMode.CREATIVE) {
-                item.setAmount(item.getAmount() - 1);
+        switch (placeTable(type, clicked, player)) {
+            case OK -> {
+                if (player.getGameMode() != GameMode.CREATIVE) {
+                    item.setAmount(item.getAmount() - 1);
+                }
+                messages.send(player, "table.placed");
             }
-            player.sendMessage("§aCasino Table placed. §7(Sitting comes in the next build step.)");
-        } else {
-            player.sendMessage("§cToo close to another table — give it more room.");
+            case TOO_CLOSE -> messages.send(player, "table.too-close");
+            case WORLD_LIMIT -> messages.send(player, "table.world-limit",
+                    "limit", settings.maxTablesPerWorld());
         }
     }
 
     @EventHandler
     public void onChunkLoad(ChunkLoadEvent event) {
-        for (UnoTable t : tables.values()) {
-            if (t.isSpawned()) {
-                continue;
-            }
-            Location a = t.anchor();
-            if (a.getWorld().equals(event.getWorld())
-                    && (a.getBlockX() >> 4) == event.getChunk().getX()
-                    && (a.getBlockZ() >> 4) == event.getChunk().getZ()) {
+        List<UnoTable> here = byChunk.get(chunkKey(event.getChunk().getX(), event.getChunk().getZ()));
+        if (here == null) {
+            return;
+        }
+        for (UnoTable t : here) {
+            if (!t.isSpawned() && event.getWorld().equals(t.anchor().getWorld())) {
                 spawnVisuals(t);
             }
         }
@@ -421,14 +579,12 @@ public class TableManager implements Listener {
 
     @EventHandler
     public void onChunkUnload(ChunkUnloadEvent event) {
-        for (UnoTable t : tables.values()) {
-            if (!t.isSpawned()) {
-                continue;
-            }
-            Location a = t.anchor();
-            if (a.getWorld().equals(event.getWorld())
-                    && (a.getBlockX() >> 4) == event.getChunk().getX()
-                    && (a.getBlockZ() >> 4) == event.getChunk().getZ()) {
+        List<UnoTable> here = byChunk.get(chunkKey(event.getChunk().getX(), event.getChunk().getZ()));
+        if (here == null) {
+            return;
+        }
+        for (UnoTable t : here) {
+            if (t.isSpawned() && event.getWorld().equals(t.anchor().getWorld())) {
                 // Non-persistent entities unload with the chunk; reset so they respawn on reload.
                 t.entityIds().clear();
                 t.setSpawned(false);
@@ -440,15 +596,43 @@ public class TableManager implements Listener {
         return tables.values();
     }
 
+    public UnoTable table(UUID id) {
+        return tables.get(id);
+    }
+
+    /** Find a table by the start of its id, the way an admin types it from /uno list. */
+    public UnoTable findByPrefix(String prefix) {
+        String lower = prefix.toLowerCase();
+        UnoTable match = null;
+        for (UnoTable t : tables.values()) {
+            if (t.id().toString().startsWith(lower)) {
+                if (match != null) {
+                    return null; // ambiguous
+                }
+                match = t;
+            }
+        }
+        return match;
+    }
+
+    /** Tables we know of but can't build — reported by /uno list so they're not a mystery. */
+    public List<String[]> pendingSummaries() {
+        List<String[]> out = new ArrayList<>(pending.size());
+        for (PendingTable p : pending) {
+            out.add(new String[]{p.key(), p.world()});
+        }
+        return out;
+    }
+
     // -------------------------------------------------------------------- seats
 
     private void sit(Player player, UnoTable table, int index) {
         if (seated.containsKey(player.getUniqueId())) {
-            player.sendMessage("§eYou're already seated. Press §6Shift §eto leave first.");
+            messages.send(player, "table.already-seated");
             return;
         }
         if (!table.isSeatFree(index)) {
-            player.sendMessage("§cThat seat is taken.");
+            messages.send(player, "table.seat-taken");
             return;
         }
         Location seat = table.seats().get(index);
@@ -469,13 +653,17 @@ public class TableManager implements Listener {
             as.setSilent(true);
             as.setCanPickupItems(false);
             as.getPersistentDataContainer().set(vehicleKey, PersistentDataType.BYTE, (byte) 1);
+            as.getPersistentDataContainer().set(idKey, PersistentDataType.STRING, table.id().toString());
         });
+        // Registered with the table so removing it tears the mount down too — otherwise the
+        // rider is left sitting on an invisible entity nothing owns.
+        table.entityIds().add(mount.getUniqueId());
         player.teleport(seat); // align facing toward the table centre
         mount.addPassenger(player);
         table.setOccupant(index, player.getUniqueId());
         seated.put(player.getUniqueId(), new Seated(table.id(), index, mount.getUniqueId()));
 
-        player.sendMessage("§aYou sit down at the Casino Table. §7Press §6Shift §7to leave.");
+        messages.send(player, "table.sit");
     }
 
     private void leaveSeat(Player player) {
@@ -486,15 +674,17 @@ public class TableManager implements Listener {
         UnoTable table = tables.get(s.tableId());
         if (table != null) {
             table.clearOccupant(s.index());
+            table.entityIds().remove(s.vehicleId());
         }
         UUID vehicleId = s.vehicleId();
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             Entity vehicle = Bukkit.getEntity(vehicleId);
             if (vehicle != null) {
+                vehicle.eject();
                 vehicle.remove();
             }
         });
-        player.sendMessage("§7You leave the table.");
+        messages.send(player, "table.leave");
     }
 
     /** True if the player is currently seated at any table. */

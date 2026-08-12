@@ -1,0 +1,168 @@
+# ============================================================
+#  UNO — player-facing text
+# ============================================================
+#
+#  Every string the plugin shows a player lives here. Reword, restyle or translate
+#  freely, then run /uno reload.
+#
+#  Formatting is MiniMessage: <red>, <gold>, <bold>, <gradient:...>, <click:...>.
+#  See https://docs.advntr.dev/minimessage/format.html
+#
+#  <placeholders> are substituted by the plugin and are inserted as plain text, so a
+#  player called "<red>x" can't inject colour. Each message lists the ones it accepts;
+#  you may drop any of them, but a name the plugin doesn't supply stays as literal text.
+#
+#  Keys missing from this file fall back to the version shipped inside the jar, so a
+#  partial file is safe — you only need to list what you want to change.
+
+# Prepended wherever a message uses <prefix>.
+prefix: "<gold><bold>UNO</bold></gold> <dark_gray>|</dark_gray> "
+
+common:
+  no-permission: "<red>You don't have permission."
+  players-only: "<red>Only players can do that."
+  unknown-subcommand: "<gray>Unknown subcommand. Try <yellow>/<command> help<gray>."
+  debug-disabled: "<red>That's a debug command. Set <yellow>debug: true<red> in config.yml to use it."
+  number-expected: "<red>'<value>' isn't a number."
+
+plugin:
+  header: "<gold>UNO <gray>v<version> <dark_gray>| <gray>/uno help"
+  version: "<gold>UNO <gray>v<version>"
+  reloaded: "<green>UNO config and messages reloaded."
+  help-header: "<gold><bold>UNO</bold> <dark_gray>— commands"
+  help-play: "<yellow>/uno start [bots] <gray>— deal a hand to everyone at your table"
+  help-gamble: "<yellow>/gamble <gray>— wager items on a hand (see <yellow>/gamble help<gray>)"
+  help-version: "<yellow>/uno version <gray>— plugin version"
+  help-admin-header: "<dark_gray>— admin —"
+  help-give: "<yellow>/uno give table <gray>— get a placeable casino table"
+  help-remove: "<yellow>/uno remove <gray>— remove the nearest table"
+  help-list: "<yellow>/uno list <gray>— every placed table"
+  help-info: "<yellow>/uno info <gray>— running games and open pots"
+  help-tp: "<yellow>/uno tp <id> <gray>— teleport to a table"
+  help-end: "<yellow>/uno end <player|all> <gray>— force a hand to finish"
+  help-refund: "<yellow>/uno refund <player|all> <gray>— settle a stuck pot back to its stakers"
+  help-reload: "<yellow>/uno reload <gray>— re-read config.yml and messages.yml"
+
+table:
+  given: "<green>Received a <gold>Casino Table<green> — right-click the ground to place it."
+  unknown-type: "<red>Unknown table type. Use <yellow>table<red>."
+  placed: "<green>Casino Table placed. <gray>Right-click a stool to sit down."
+  too-close: "<red>Too close to another table — give it more room."
+  world-limit: "<red>This world already has its limit of <limit> UNO table(s)."
+  removed: "<green>Removed the nearest table."
+  none-near: "<red>No table within <radius> blocks."
+  busy: "<red>That table is in use — finish the hand (or <yellow>/uno end<red>) before removing it."
+  sit: "<green>You sit down at the Casino Table. <gray>Press <gold>Shift <gray>to leave."
+  seat-taken: "<red>That seat is taken."
+  already-seated: "<yellow>You're already seated. Press <gold>Shift <yellow>to leave first."
+  leave: "<gray>You leave the table."
+  list-header: "<gold><bold>UNO tables</bold> <dark_gray>— <count> placed"
+  list-entry: "<dark_gray> · <yellow><id> <gray><world> <white><x>, <y>, <z> <dark_gray>[<gray><seated>/<seats> seated<dark_gray>]"
+  list-empty: "<gray>No tables placed yet. <yellow>/uno give table<gray> to get one."
+  not-found: "<red>No table with id starting <yellow><id><red>."
+  teleported: "<green>Teleported to table <yellow><id><green>."
+  pending-world: "<dark_gray> · <yellow><id> <gray><world> <dark_red>(world not loaded — kept on file)"
+
+game:
+  started: "<gold><bold>UNO</bold> <gray>started — <count> players. Good luck!"
+  controls: "<gray>A/D or wheel = pick · <green>left-click/Q = play <gray>· <yellow>right-click/F = draw"
+  already-in-game: "<yellow>You're already in a game. Finish it first."
+  other-in-game: "<red><player> is already in a game."
+  sit-first: "<yellow>Sit at a table first (right-click a stool), then run <gold>/uno start<yellow>."
+  tables-unavailable: "<red>Tables aren't available right now."
+  need-players: "<yellow>Need at least 2 players — sit a friend down, or add bots: <gold>/uno start <bots><yellow>."
+  event: "<gray><event>"
+  win: "<gold><bold><player> wins!</bold>"
+  left: "<red><player> left the hand."
+  bossbar: "<white>Top: <gold><top>  <white>| Colour: <colour>  <white>| Turn: <aqua><player> <dir>  <white>| Deck: <gray><deck>"
+  colour-title: "Pick a colour for your wild"
+  colour-red: "<red><bold>Red"
+  colour-green: "<green><bold>Green"
+  colour-blue: "<blue><bold>Blue"
+  colour-yellow: "<yellow><bold>Yellow"
+  turn-warning: "<yellow><seconds>s to play — or your turn is taken for you."
+  turn-timeout: "<gray><player> took too long — drew a card and passed."
+  ended-by-admin: "<red>An admin ended this hand."
+  info-header: "<gold><bold>UNO</bold> <dark_gray>— <games> game(s), <bets> open pot(s)"
+  info-game: "<dark_gray> · <gray>hand at <yellow><table> <dark_gray>[<white><players><dark_gray>] turn: <aqua><turn>"
+  info-bet: "<dark_gray> · <gray>pot at <yellow><table> <dark_gray>[<white><state><dark_gray>] <gold><items> <gray>item(s) from <white><stakers>"
+  info-none: "<gray>Nothing running."
+  ended: "<green>Ended <count> hand(s)."
+  end-none: "<gray>No matching hand to end."
+
+hand:
+  selected: "<gray>Selected: <white><card> <dark_gray>(<index>/<count>)"
+  slot-freed: "<gray>Moved <white><item> <gray>out of your hand slot to make room for your cards."
+
+bet:
+  disabled: "<red>Gambling is disabled on this server."
+  help-header: "<gold><bold>LET IT RIDE</bold> <dark_gray>— <gray>wager items on a hand of UNO"
+  help-open: "<yellow>/gamble <gray>— open (or join) the ante at your table"
+  help-stake: "<gray>  then <white>drop items onto the table <gray>to stake them"
+  help-ready: "<yellow>/gamble ready <gray>— lock your stake in · <yellow>/gamble out <gray>— take it back"
+  help-pot: "<yellow>/gamble pot <gray>— what's on the line · <yellow>/gamble go <gray>— host: start now"
+  help-cancel: "<yellow>/gamble cancel <gray>— host: call it off and refund everyone"
+  sit-first: "<yellow>Sit at a casino table first <gray>(right-click a stool)<yellow>, then run <gold>/gamble<yellow>."
+  in-hand-already: "<red>You're already in a hand. Finish it first."
+  opened: "<gold><bold><player> opened a bet!</bold> <gray>Winner takes the pot."
+  opened-hint: "<gray>Toss items onto the table to stake them, then <yellow>/gamble ready<gray>."
+  hand-in-play: "<red>A hand is already being played for this pot — wait for it to settle."
+  youre-in: "<gray>You're in. Drop items on the table to raise, then <yellow>/gamble ready<gray>."
+  bet-open: "<green>The bet is open. <gray>Drop items onto the table to buy in."
+  no-bet: "<gray>No bet running at your table. <yellow>/gamble <gray>opens one."
+  already-playing: "<red>The hand is already being played."
+  stake-first: "<yellow>Stake something first — drop items onto the table."
+  min-ante: "<yellow>The minimum ante here is <min> item(s); you've staked <staked>."
+  already-ready: "<gray>You're already ready. Waiting on the others."
+  ready: "<green><player> is ready <gray>(<ready>/<live>)"
+  not-in-bet: "<gray>You're not in this bet."
+  pulled-out: "<gray><player> pulled out of the bet."
+  pot-header: "<gold><bold>POT</bold> <dark_gray>— <yellow><items> <gray>item(s) from <yellow><stakers> <gray>player(s)"
+  pot-entry: "<dark_gray> · <white><player> <gray>— <items> item(s) <dark_gray>[<status><dark_gray>]"
+  pot-status-ready: "<green>ready"
+  pot-status-anteing: "<yellow>anteing"
+  pot-status-out: "<dark_gray>out"
+  pot-in-play: "<gray>The hand is in play. Win it and it's all yours."
+  host-only: "<red>Only <player> (who opened the bet) can do that."
+  started-without-you: "<yellow>The bet started without you — your stake was returned."
+  not-enough: "<yellow>Not enough ready players to start."
+  cancelled: "<red><player> called the bet off — everything goes back."
+  bots-set: "<gray>Test bots at this table: <yellow><count><gray>. They don't stake — if a bot wins, the pot is a push and everyone is refunded."
+  plugin-item: "<red>That's UNO equipment — you can't put it in the pot."
+  locked-in: "<yellow>You've already locked your stake in. <gray>/gamble out <yellow>to take it back first."
+  container-blocked: "<red>You can't stake something with items inside it."
+  blacklisted: "<red><item> can't be staked on this server."
+  pot-limit: "<red>That would put the pot over this server's limit of <limit> item(s)."
+  staked: "<yellow><player> <gray>stakes <white><amount>× <item> <dark_gray>(pot: <pot>)"
+  table-vanished: "<red>The table vanished — refunding everyone."
+  deal-failed: "<red>Couldn't deal the hand (someone's already in a game) — refunding."
+  on-the-line: "<gold><bold><items> items on the line.</bold> <gray>Deal!"
+  forfeit: "<red><player> walked out — their <yellow><items> <red>item(s) stay in the pot."
+  no-winner: "<gray>No winner — the pot goes back to everyone who staked it."
+  bot-push: "<gray><player> (a bot) took the hand — <white>push<gray>, everyone is refunded."
+  ride-won: "<gold><bold><player> takes the hand</bold> <gray>— <items> item(s) won."
+  ride-offer: "<gold>You won <items> item(s). "
+  ride-cash-button: "[ CASH OUT ]"
+  ride-cash-tip: "Take the <items> item(s) now"
+  ride-ride-button: "[ LET IT RIDE ]"
+  ride-ride-tip: "Leave all <items> item(s) in for the next hand.\nThe table must match it to challenge you."
+  ride-window: "<dark_gray>(<seconds>s — no answer cashes you out)"
+  time-up: "<gray>Time's up — cashing out."
+  rides: "<red><bold><player> LETS IT RIDE!</bold> <gold><items> <gray>item(s) stay on the table."
+  match-it: "<gray>Match it to challenge — drop your ante and <yellow>/gamble ready <gray>within <seconds>s."
+  no-takers: "<gray>No takers — <player> walks away with it."
+  challenge-lapsed: "<gray>The challenge window closed — anyone who hadn't locked in got their stake back."
+  nothing-to-ride: "<gray>Nothing to ride on right now."
+  nothing-to-cash: "<gray>You've got nothing to cash out."
+  collects: "<gold><bold><player> collects <items> item(s)!"
+  expired: "<gray>Nobody locked in — the bet expired and everything went back."
+  left-before-deal: "<gray><player> left before the deal — stake returned."
+  refunded-admin: "<green>Refunded <count> pot(s) to their stakers."
+  refund-none: "<gray>No matching pot to refund."
+  pot-label-ante: "<gold><bold>POT <white><items> <gray>· ante open (<ready>/<live> ready)"
+  pot-label-playing: "<gold><bold>POT <white><items> <gray>· hand <hand> in play"
+  pot-label-ride: "<gold><bold>POT <white><items> <gray>· <player> deciding…"
+
+escrow:
+  returned: "<prefix><gray>returned <yellow><items> <gray>item(s) held from an unfinished bet."
+  inventory-full: "<gray>Your inventory was full — the rest dropped at your feet."
