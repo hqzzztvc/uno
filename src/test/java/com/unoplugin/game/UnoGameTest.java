@@ -255,6 +255,79 @@ class UnoGameTest {
         assertNull(game.pendingColorPlayer(), "a leaver must not hold the table hostage");
     }
 
+    // ------------------------------------------------------- the last card bites
+
+    /**
+     * Deal one card each and keep dealing until the opener holds a legal +2. That is the whole
+     * scenario: the +2 both wins the hand and lands on somebody, and the win used to be
+     * declared first, which threw the penalty away.
+     */
+    @Test
+    @DisplayName("a +2 played as the last card still makes the next player draw")
+    void winningDrawTwoStillPenalises() {
+        for (int attempt = 0; attempt < 2000; attempt++) {
+            UnoGame game = new UnoGame(UUID.randomUUID(), players(2));
+            game.start(1);
+            UUID actor = game.currentPlayer();
+            List<Integer> legal = game.legalIndices(actor);
+            if (legal.isEmpty()) {
+                continue;
+            }
+            int index = legal.get(0);
+            if (Card.parse(game.handNames(actor).get(index)).kind() != Card.Kind.DRAW2) {
+                continue;
+            }
+            UUID victim = game.players().get(1);
+            int before = game.handSize(victim);
+
+            UnoGame.PlayResult r = game.play(actor, index);
+
+            assertEquals(UnoGame.PlayResult.Status.WIN, r.status);
+            assertEquals(actor, game.winner());
+            assertEquals(victim, r.target, "the +2 still had somebody to land on");
+            assertEquals(before + 2, game.handSize(victim), "the winning +2 must still be dealt");
+            assertEquals(108, totalCards(game));
+            return;
+        }
+        throw new AssertionError("2000 deals never produced a legal +2 in a one-card hand");
+    }
+
+    /** Same rule through the wild path, where the penalty lands only after the colour is picked. */
+    @Test
+    @DisplayName("a Wild +4 played as the last card still makes the next player draw")
+    void winningWildDrawFourStillPenalises() {
+        for (int attempt = 0; attempt < 2000; attempt++) {
+            UnoGame game = new UnoGame(UUID.randomUUID(), players(2));
+            game.start(1);
+            UUID actor = game.currentPlayer();
+            if (!"wild_draw4".equals(game.handNames(actor).get(0))) {
+                continue;
+            }
+            UUID victim = game.players().get(1);
+            int before = game.handSize(victim);
+
+            assertEquals(UnoGame.PlayResult.Status.NEED_COLOR, game.play(actor, 0).status);
+            UnoGame.PlayResult r = game.chooseColor(actor, Card.Color.BLUE);
+
+            assertEquals(UnoGame.PlayResult.Status.WIN, r.status);
+            assertEquals(victim, r.target);
+            assertEquals(before + 4, game.handSize(victim), "the winning +4 must still be dealt");
+            assertEquals(108, totalCards(game));
+            return;
+        }
+        throw new AssertionError("2000 deals never dealt a wild +4 as a one-card hand");
+    }
+
+    @Test
+    @DisplayName("a finished game accepts no more colour choices")
+    void chooseColourRejectedAfterTheGameEnds() {
+        UnoGame game = started(2);
+        game.forfeit(game.players().get(0)); // last player standing wins
+        assertTrue(game.isOver());
+        assertEquals(UnoGame.PlayResult.Status.ILLEGAL,
+                game.chooseColor(game.players().get(0), Card.Color.RED).status);
+    }
+
     // -------------------------------------------------------------- exhaustion
 
     @Test

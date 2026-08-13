@@ -133,9 +133,15 @@ public final class BetSession {
         return ready.size();
     }
 
-    /** Everyone still in has locked their ante in (and there are enough of them). */
+    /**
+     * Everyone still in has locked their ante in, and there are enough players to deal to.
+     *
+     * <p>Bots count toward the head count, the same way {@code /gamble go} counts them — one
+     * human plus bots is a table. Without that this returned false forever on such a session
+     * and the only way to start was the host's own force-start.
+     */
     public boolean allReady() {
-        return live.size() >= 2 && ready.containsAll(live);
+        return !live.isEmpty() && live.size() + botCount >= 2 && ready.containsAll(live);
     }
 
     // -------------------------------------------------------------------- state

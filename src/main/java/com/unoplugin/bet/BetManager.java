@@ -381,13 +381,13 @@ public final class BetManager implements Listener, GameManager.GameListener {
             return;
         }
         List<UUID> humans = new ArrayList<>(s.live());
-        Player anchor = firstOnline(humans);
-        if (anchor == null) {
+        if (firstOnline(humans) == null) {
+            // Everyone who staked has gone offline — deal to nobody and hand it all back.
             refundAll(s);
             close(s);
             return;
         }
-        UUID gameId = games.startWager(humans, s.botCount(), table, anchor);
+        UUID gameId = games.startWager(humans, s.botCount(), table);
         if (gameId == null) {
             broadcast(s, messages.get("bet.deal-failed"));
             refundAll(s);

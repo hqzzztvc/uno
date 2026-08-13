@@ -33,7 +33,6 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -270,7 +269,12 @@ public class TableManager implements Listener {
     }
 
     private static long chunkKey(Location loc) {
-        return ((long) (loc.getBlockX() >> 4) << 32) | ((loc.getBlockZ() >> 4) & 0xffffffffL);
+        return chunkKey(loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
+    }
+
+    /** The one place the packed chunk key is defined — index and lookup can't drift apart. */
+    private static long chunkKey(int chunkX, int chunkZ) {
+        return ((long) chunkX << 32) | (chunkZ & 0xffffffffL);
     }
 
     /**
@@ -283,7 +287,7 @@ public class TableManager implements Listener {
     @EventHandler
     public void onChunkLoad(ChunkLoadEvent event) {
         List<UnoTable> here = byChunk.get(
-                ((long) event.getChunk().getX() << 32) | (event.getChunk().getZ() & 0xffffffffL));
+                chunkKey(event.getChunk().getX(), event.getChunk().getZ()));
         if (here == null) {
             return;
         }

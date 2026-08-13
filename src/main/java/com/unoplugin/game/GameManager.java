@@ -134,13 +134,15 @@ public final class GameManager implements Listener, HandManager.CardActions {
             messages.send(host, "game.table-in-use");
             return;
         }
-        botCount = Math.max(1, Math.min(9, botCount));
+        // A table has four stairs, so dealing to more than that leaves the extras standing
+        // around a hand they can't sit at. startSeated already clamps to the same limit.
+        botCount = Math.max(1, Math.min(botCount, table.maxPlayers() - 1));
         List<UUID> players = new ArrayList<>();
         players.add(host.getUniqueId());
         for (int i = 1; i <= botCount; i++) {
             players.add(newBot("Bot " + i));
         }
-        launch(players, table, host);
+        launch(players, table);
     }
 
     /** Start a real game with everyone seated at the initiator's table, plus optional bots. */
@@ -177,7 +179,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
             messages.send(initiator, "game.need-players");
             return;
         }
-        launch(players, table, initiator);
+        launch(players, table);
     }
 
     /**
@@ -185,7 +187,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
      * has anted up). Returns the game id so the caller can tie its pot to this hand, or null
      * if someone in the list is already playing.
      */
-    public UUID startWager(List<UUID> humans, int extraBots, UnoTable table, Player anchor) {
+    public UUID startWager(List<UUID> humans, int extraBots, UnoTable table) {
         for (UUID u : humans) {
             if (playerGame.containsKey(u)) {
                 return null;
@@ -200,7 +202,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
         for (int i = 1; i <= extraBots; i++) {
             players.add(newBot("Bot " + i));
         }
-        return launch(players, table, anchor);
+        return launch(players, table);
     }
 
     private UUID newBot(String name) {
@@ -211,46 +213,35 @@ public final class GameManager implements Listener, HandManager.CardActions {
     }
 
     /**
-     * Common game bring-up for a fixed player list. {@code table} (nullable) centres the
-     * piles on its surface; otherwise they drop a couple of blocks in front of {@code anchor}.
+     * Common game bring-up for a fixed player list, with the piles centred on {@code table}'s
+     * surface.
+     *
+     * <p>Every caller holds a real table by the time it gets here — a hand dealt without one
+     * put its piles on the ground wherever the caller happened to be standing, and left
+     * {@link #hasGameAtTable} with nothing to protect the hand by.
      */
-    private UUID launch(List<UUID> players, UnoTable table, Player anchor) {
+    private UUID launch(List<UUID> players, UnoTable table) {
         UUID gameId = UUID.randomUUID();
         UnoGame game = new UnoGame(gameId, players);
         game.setNamer(this::displayName);
         game.start(settings.startingHandSize());
         games.put(gameId, game);
-        gameTable.put(gameId, table == null ? null : table.id());
+        gameTable.put(gameId, table.id());
         for (UUID p : players) {
             playerGame.put(p, gameId);
         }
         bars.put(gameId, BossBar.bossBar(Component.empty(), 1f, BossBar.Color.WHITE, BossBar.Overlay.PROGRESS));
 
-        Location discardLoc;
-        Location drawLoc;
-        float pileYaw;
-        if (table != null) {
-            Location centre = table.anchor();
-            pileYaw = table.yaw();
-            double r = Math.toRadians(pileYaw);
-            Vector right = new Vector(Math.cos(r), 0, Math.sin(r));
-            // Bottom card sits flush on the table surface.
-            discardLoc = centre.clone().add(right.clone().multiply(-0.38));
-            discardLoc.setY(centre.getY() + UnoTable.SURFACE_Y);
-            drawLoc = centre.clone().add(right.clone().multiply(0.38));
-            drawLoc.setY(centre.getY() + UnoTable.SURFACE_Y);
-        } else {
-            Location base = anchor.getLocation();
-            Vector fwd = base.getDirection().setY(0);
-            if (fwd.lengthSquared() < 1.0e-6) {
-                fwd = new Vector(0, 0, 1);
-            }
-            fwd.normalize();
-            Vector right = new Vector(-fwd.getZ(), 0, fwd.getX());
-            pileYaw = base.getYaw();
-            discardLoc = base.clone().add(fwd.clone().multiply(2.5)).add(0, 0.06, 0);
-            drawLoc = discardLoc.clone().add(right.clone().multiply(0.9));
-        }
+        Location centre = table.anchor();
+        float pileYaw = table.yaw();
+        double r = Math.toRadians(pileYaw);
+        Vector right = new Vector(Math.cos(r), 0, Math.sin(r));
+        // Bottom card sits flush on the table surface.
+        Location discardLoc = centre.clone().add(right.clone().multiply(-0.38));
+        discardLoc.setY(centre.getY() + UnoTable.SURFACE_Y);
+        Location drawLoc = centre.clone().add(right.clone().multiply(0.38));
+        drawLoc.setY(centre.getY() + UnoTable.SURFACE_Y);
+
         PileRenderer pile = new PileRenderer(plugin, discardLoc, drawLoc, pileYaw);
         pile.spawn(game.top(), game.drawPileSize());
         piles.put(gameId, pile);
@@ -619,7 +610,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
         return playerGame.get(playerId);
     }
 
-    /** The table a game is being played at, or null for a table-less test game. */
+    /** The table a game is being played at, or null if there is no such game. */
     public UUID tableOfGame(UUID gameId) {
         return gameTable.get(gameId);
     }

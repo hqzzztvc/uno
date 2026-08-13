@@ -180,7 +180,20 @@ public class UnoTable {
 
     public float yaw() { return yaw; }
 
-    public List<Location> seats() { return seats; }
+    /**
+     * The four seat positions, as copies.
+     *
+     * <p>Copies because a {@link Location} is mutable and {@code add()} returns the same object
+     * it just changed: one caller doing {@code table.seats().get(0).add(0, 1, 0)} would move
+     * the seat itself, permanently and invisibly, for every later build and repair.
+     */
+    public List<Location> seats() {
+        List<Location> copies = new ArrayList<>(seats.size());
+        for (Location seat : seats) {
+            copies.add(seat.clone());
+        }
+        return copies;
+    }
 
     public int seatCount() { return seats.size(); }
 

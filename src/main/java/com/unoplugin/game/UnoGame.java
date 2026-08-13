@@ -280,6 +280,9 @@ public final class UnoGame {
 
     /** Complete a pending wild by choosing its colour. */
     public PlayResult chooseColor(UUID player, Card.Color color) {
+        if (over) {
+            return PlayResult.illegal("The game is over.");
+        }
         if (pendingColorPlayer == null || !player.equals(pendingColorPlayer)) {
             return PlayResult.illegal("No colour choice pending.");
         }
@@ -359,10 +362,21 @@ public final class UnoGame {
 
     private PlayResult resolve(Card card, UUID player) {
         if (hands.get(player).isEmpty()) {
+            // A card still does what it says when it is the one that goes out: under the
+            // official rules a +2 or +4 played as the last card still makes the next player
+            // draw. It has to happen BEFORE the win is declared — once `over` is set there is
+            // no turn left to move and no "next player" to hand the penalty to.
+            UUID hit = peek(1);
+            int penalty = switch (card.kind()) {
+                case DRAW2 -> drawTo(hit, 2);
+                case WILD_DRAW4 -> drawTo(hit, 4);
+                default -> 0;
+            };
             over = true;
             winner = player;
-            lastEvent = namer.apply(player) + " played " + card.label() + " and won!";
-            return PlayResult.win(card);
+            lastEvent = namer.apply(player) + " played " + card.label() + " and won!"
+                    + (penalty > 0 ? " " + namer.apply(hit) + " still draws " + penalty + "." : "");
+            return PlayResult.win(card, penalty > 0 ? hit : null);
         }
         UUID next = peek(1);
         UUID affected = null; // whoever the card lands on, for the caller to react to
@@ -474,7 +488,12 @@ public final class UnoGame {
         }
 
         public static PlayResult win(Card card) {
-            return new PlayResult(Status.WIN, null, card, null);
+            return win(card, null);
+        }
+
+        /** A win whose final card still landed a penalty on somebody ({@code target}). */
+        public static PlayResult win(Card card, UUID target) {
+            return new PlayResult(Status.WIN, null, card, target);
         }
 
         /** {@code card} is null when the deck had nothing left to give. */

@@ -174,6 +174,25 @@ public final class CardTester {
         return stack;
     }
 
+    /**
+     * Drop every debug fan (plugin disable).
+     *
+     * <p>These are per-tick display entities. The scheduler stops driving them when the plugin
+     * disables, but nothing removes them — so without this a {@code /reload} leaves a frozen
+     * fan hanging in the air until its chunk unloads.
+     */
+    public void shutdown() {
+        for (Session session : new ArrayList<>(sessions.values())) {
+            session.task.cancel();
+            for (ItemDisplay d : session.cards) {
+                if (d.isValid()) {
+                    d.remove();
+                }
+            }
+        }
+        sessions.clear();
+    }
+
     /** Remove the player's fan (and any stray tagged cards in their world). Returns count removed. */
     public int clear(Player player) {
         int removed = 0;

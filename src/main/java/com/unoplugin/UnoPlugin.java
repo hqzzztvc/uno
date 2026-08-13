@@ -106,6 +106,9 @@ public final class UnoPlugin extends JavaPlugin {
         if (handManager != null) {
             handManager.shutdown();
         }
+        if (cardTester != null) {
+            cardTester.shutdown();
+        }
         if (tableManager != null) {
             tableManager.save();
             tableManager.shutdown();

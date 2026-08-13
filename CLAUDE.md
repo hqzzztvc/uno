@@ -191,6 +191,10 @@ command/  UnoCommand (routing + permissions + tab completion), GambleCommand
   **Zero Bukkit imports** (that's what makes it testable); it resolves names through an injected
   `namer`. All rendering, chat, bots and scheduling live in `GameManager`. Its `id()` is the *game*
   id, not a table id — `GameManager.tableOfGame()` maps a game to the table it's being played at.
+- **A card still does what it says when it is the one that goes out.** `UnoGame.resolve` deals a
+  winning `+2`/`+4`'s penalty to the next player *before* declaring the win, because once `over`
+  is set there is no turn left to move and nobody to hand it to. Checking the empty hand first
+  reads more naturally and is why the penalty used to vanish; `UnoGameTest` pins both cards.
 - **`Deck.draw()` returns `null` when there is genuinely nothing left.** It must never rebuild
   itself: players are holding cards from the current deck, so a rebuild puts a second copy of every
   one of them into play. Callers treat null as "no card — the turn just passes".
@@ -298,9 +302,17 @@ Sitting still works by mounting an invisible `ArmorStand`, so `/uno leave` eject
 `onDismount` route into `leaveSeat` — the bookkeeping and the message then happen in exactly one
 place whether the player typed the command or just pressed shift.
 
+**Standing up leaves the hand.** `leaveSeat` fires `TableManager.StandUpHook`, wired in
+`UnoPlugin` to `GameManager.forfeit`, so walking away costs exactly what `/uno quit` costs —
+staked pot included, because it *is* that. The hook exists for the same reason `BusyCheck` does:
+tables are wired below games and must not know what a game is. Seat bookkeeping finishes before
+the hook fires, since the forfeit broadcasts to the table and can end the hand outright, and both
+walk `seated`.
+
 ### Leaving a hand
 
-Two commands, and the difference between them is the wagering rule:
+Two commands (plus standing up, which is `/uno quit` by another name), and the difference
+between them is the wagering rule:
 
 - **`/uno quit`** forfeits — you drop out, everyone else plays on. It routes through the same
   `GameManager.forfeit` as disconnecting, deliberately: typing it has to cost exactly what pulling
