@@ -64,6 +64,7 @@ table:
   already-seated: "<yellow>You're already seated. Press <gold>Shift <yellow>to leave first."
   not-seated: "<gray>You aren't sitting at a table."
   leave: "<gray>You leave the table."
+  stand-forfeit: "<red>You stood up, so you're out of the hand. <gray>Sit back down and deal again when you're ready."
   list-header: "<gold><bold>UNO tables</bold> <dark_gray>— <count> placed"
   list-entry: "<dark_gray> · <yellow><id> <gray><world> <white><x>, <y>, <z> <dark_gray>[<gray><seated>/<seats> seated<dark_gray>]"
   list-empty: "<gray>No tables yet. <yellow>/uno createtable <theme><gray> to build one."

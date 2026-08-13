@@ -61,6 +61,17 @@ public class TableManager implements Listener {
         boolean isBusy(UUID tableId);
     }
 
+    /**
+     * Lets the game layer drop a player out of their hand when they stand up.
+     *
+     * <p>A hook rather than a direct call, for the same reason {@link BusyCheck} is one: tables
+     * are built below games in the wiring, so this class must not know what a game is.
+     */
+    public interface StandUpHook {
+        /** @return true if the player was in a hand and has just been dropped from it. */
+        boolean onStandUp(Player player);
+    }
+
     private final UnoPlugin plugin;
     private final Messages messages;
     private final Settings settings;
@@ -84,6 +95,7 @@ public class TableManager implements Listener {
     private final File dataFile;
 
     private BusyCheck busyCheck = id -> false;
+    private StandUpHook standUpHook = p -> false;
 
     /** A table we know about but can't build yet, because its world isn't loaded. */
     private record PendingTable(String key, String type, String world,
@@ -121,6 +133,11 @@ public class TableManager implements Listener {
     /** Wire in "is anything using this table right now?" (games and pots). */
     public void setBusyCheck(BusyCheck busyCheck) {
         this.busyCheck = busyCheck == null ? id -> false : busyCheck;
+    }
+
+    /** Wire in "standing up leaves the hand" — the game layer does the forfeit itself. */
+    public void setStandUpHook(StandUpHook standUpHook) {
+        this.standUpHook = standUpHook == null ? p -> false : standUpHook;
     }
 
     // ---------------------------------------------------------------- lifecycle
@@ -872,6 +889,15 @@ public class TableManager implements Listener {
         });
         messages.send(player, "table.leave");
         fx.seat(player, false);
+        // Standing up is leaving the hand — you can't play a card you've walked away from, and
+        // the alternative is a seat nobody is in still holding a turn the table has to wait out.
+        // It costs exactly what /uno quit costs, including a staked pot, because it IS that.
+        //
+        // The seat bookkeeping above is finished first on purpose: the forfeit broadcasts to
+        // everyone at the table and can end the hand outright, and both walk `seated`.
+        if (standUpHook.onStandUp(player)) {
+            messages.send(player, "table.stand-forfeit");
+        }
     }
 
     /** True if the player is currently seated at any table. */

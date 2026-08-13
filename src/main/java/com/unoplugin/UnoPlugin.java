@@ -70,6 +70,8 @@ public final class UnoPlugin extends JavaPlugin {
         // A table with a hand or a pot on it must not be removable out from under them.
         tableManager.setBusyCheck(id ->
                 gameManager.hasGameAtTable(id) || betManager.hasSessionAtTable(id));
+        // Getting up from the table is leaving the hand, by the same route as /uno quit.
+        tableManager.setStandUpHook(gameManager::forfeit);
 
         events.registerEvents(new ResourcePackSender(this, settings), this);
 
