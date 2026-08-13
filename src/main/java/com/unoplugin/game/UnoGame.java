@@ -365,9 +365,11 @@ public final class UnoGame {
             return PlayResult.win(card);
         }
         UUID next = peek(1);
+        UUID affected = null; // whoever the card lands on, for the caller to react to
         switch (card.kind()) {
             case SKIP -> {
                 advance(2);
+                affected = next;
                 lastEvent = namer.apply(player) + " played Skip — " + namer.apply(next) + " skipped";
             }
             case REVERSE -> {
@@ -383,6 +385,7 @@ public final class UnoGame {
             case DRAW2 -> {
                 int got = drawTo(next, 2);
                 advance(2);
+                affected = next;
                 lastEvent = namer.apply(player) + " played +2 — " + namer.apply(next)
                         + " draws " + got + " & skipped";
             }
@@ -393,6 +396,7 @@ public final class UnoGame {
             case WILD_DRAW4 -> {
                 int got = drawTo(next, 4);
                 advance(2);
+                affected = next;
                 lastEvent = namer.apply(player) + " played Wild +4 — " + namer.apply(next)
                         + " draws " + got + " & skipped; colour " + activeColor.lower();
             }
@@ -401,7 +405,7 @@ public final class UnoGame {
                 lastEvent = namer.apply(player) + " played " + card.label();
             }
         }
-        return PlayResult.ok(card);
+        return PlayResult.ok(card, affected);
     }
 
     /** Deal {@code n} penalty cards, stopping early if the deck is genuinely exhausted. */
@@ -439,32 +443,43 @@ public final class UnoGame {
         public final Status status;
         public final String message;
         public final Card card;
+        /**
+         * Who the card landed on — the player skipped or made to draw — or null for a card
+         * that only affects the table. The turn has already moved past them by the time the
+         * caller sees this, so it cannot be worked out after the fact.
+         */
+        public final UUID target;
 
-        private PlayResult(Status status, String message, Card card) {
+        private PlayResult(Status status, String message, Card card, UUID target) {
             this.status = status;
             this.message = message;
             this.card = card;
+            this.target = target;
         }
 
         public static PlayResult ok(Card card) {
-            return new PlayResult(Status.OK, null, card);
+            return ok(card, null);
+        }
+
+        public static PlayResult ok(Card card, UUID target) {
+            return new PlayResult(Status.OK, null, card, target);
         }
 
         public static PlayResult illegal(String message) {
-            return new PlayResult(Status.ILLEGAL, message, null);
+            return new PlayResult(Status.ILLEGAL, message, null, null);
         }
 
         public static PlayResult needColor() {
-            return new PlayResult(Status.NEED_COLOR, null, null);
+            return new PlayResult(Status.NEED_COLOR, null, null, null);
         }
 
         public static PlayResult win(Card card) {
-            return new PlayResult(Status.WIN, null, card);
+            return new PlayResult(Status.WIN, null, card, null);
         }
 
         /** {@code card} is null when the deck had nothing left to give. */
         public static PlayResult drew(Card card) {
-            return new PlayResult(Status.DREW, null, card);
+            return new PlayResult(Status.DREW, null, card, null);
         }
     }
 }

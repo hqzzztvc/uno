@@ -80,6 +80,14 @@ game:
   colour-green: "<green><bold>Green"
   colour-blue: "<blue><bold>Blue"
   colour-yellow: "<yellow><bold>Yellow"
+  your-turn: "<gold><bold>Your turn</bold> <gray>— left-click to play, right-click to draw"
+  uno: "<gold><bold><player> has UNO!</bold> <gray>One card left."
+  uno-title: "<gold><bold>UNO!"
+  uno-subtitle: "<gray>One card left"
+  start-title: "<gold><bold>UNO"
+  start-subtitle: "<gray><count> players — good luck"
+  win-title: "<gold><bold><player> wins!"
+  win-subtitle: "<gray>Hand over"
   turn-warning: "<yellow><seconds>s to play — or your turn is taken for you."
   turn-timeout: "<gray><player> took too long — drew a card and passed."
   ended-by-admin: "<red>An admin ended this hand."
@@ -93,6 +101,8 @@ game:
 hand:
   selected: "<gray>Selected: <white><card> <dark_gray>(<index>/<count>)"
   slot-freed: "<gray>Moved <white><item> <gray>out of your hand slot to make room for your cards."
+  slot-held: "<gray>Your inventory was full, so <white><item> <gray>is being held for you — you get it back when the hand ends."
+  dropped: "<yellow>No room left for <white><item><yellow> — dropped at your feet."
 
 bet:
   disabled: "<red>Gambling is disabled on this server."

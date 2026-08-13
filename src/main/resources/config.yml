@@ -101,6 +101,22 @@ gambling:
     # Anyone who staked but never locked in is refunded when this expires.
     challenge-seconds: 90
 
+# ---- Effects ----
+#
+#  Sounds and particles: the card snap on the discard pile, the click as the fan
+#  scrolls, the fireworks over a winner. Every one of them is bounded — nothing here
+#  loops or scales with the number of players at the table.
+effects:
+  # All sound effects. Turning this off leaves the game fully playable, just silent.
+  sounds: true
+
+  # All particle effects.
+  particles: true
+
+  # Multiplier on every sound above, clamped to 0-2. Sounds play in the PLAYERS
+  # category, so a player can also turn them down themselves.
+  volume: 1.0
+
 # ---- Debug ----
 #
 #  Enables the throwaway development commands (/uno testcards, /uno hand,

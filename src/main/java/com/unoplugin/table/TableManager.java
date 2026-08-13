@@ -2,6 +2,7 @@ package com.unoplugin.table;
 
 import com.unoplugin.UnoPlugin;
 import com.unoplugin.util.Messages;
+import com.unoplugin.util.Fx;
 import com.unoplugin.util.Settings;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -70,6 +71,7 @@ public class TableManager implements Listener {
     private final UnoPlugin plugin;
     private final Messages messages;
     private final Settings settings;
+    private final Fx fx;
     private final Map<UUID, UnoTable> tables = new HashMap<>();
     /**
      * Tables whose world wasn't loaded when we read tables.yml. They are NOT dropped:
@@ -112,10 +114,11 @@ public class TableManager implements Listener {
 
     private record Seated(UUID tableId, int index, UUID vehicleId) {}
 
-    public TableManager(UnoPlugin plugin, Messages messages, Settings settings) {
+    public TableManager(UnoPlugin plugin, Messages messages, Settings settings, Fx fx) {
         this.plugin = plugin;
         this.messages = messages;
         this.settings = settings;
+        this.fx = fx;
         this.itemKey = new NamespacedKey(plugin, "uno_table_item");
         this.idKey = new NamespacedKey(plugin, "uno_table_id");
         this.seatKey = new NamespacedKey(plugin, "uno_seat_index");
@@ -651,6 +654,7 @@ public class TableManager implements Listener {
                     item.setAmount(item.getAmount() - 1);
                 }
                 messages.send(player, "table.placed");
+                fx.tablePlaced(clicked.getLocation().add(0.5, 1.0, 0.5));
             }
             case TOO_CLOSE -> messages.send(player, "table.too-close");
             case WORLD_LIMIT -> messages.send(player, "table.world-limit",
@@ -761,6 +765,7 @@ public class TableManager implements Listener {
         seated.put(player.getUniqueId(), new Seated(table.id(), index, mount.getUniqueId()));
 
         messages.send(player, "table.sit");
+        fx.seat(player, true);
     }
 
     private void leaveSeat(Player player) {
@@ -782,6 +787,7 @@ public class TableManager implements Listener {
             }
         });
         messages.send(player, "table.leave");
+        fx.seat(player, false);
     }
 
     /** True if the player is currently seated at any table. */

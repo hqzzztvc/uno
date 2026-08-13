@@ -3,6 +3,7 @@ package com.unoplugin.bet;
 import com.unoplugin.game.GameManager;
 import com.unoplugin.table.TableManager;
 import com.unoplugin.table.UnoTable;
+import com.unoplugin.util.Fx;
 import com.unoplugin.util.Messages;
 import com.unoplugin.util.NameCache;
 import com.unoplugin.util.Settings;
@@ -15,7 +16,6 @@ import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
-import org.bukkit.Sound;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -67,6 +67,7 @@ public final class BetManager implements Listener, GameManager.GameListener {
     private final Messages messages;
     private final Settings settings;
     private final NameCache names;
+    private final Fx fx;
     private final EscrowStore escrow;
     private final BetLog log;
 
@@ -74,13 +75,14 @@ public final class BetManager implements Listener, GameManager.GameListener {
     private final Map<UUID, UUID> byGame = new HashMap<>();         // gameId   -> tableId
 
     public BetManager(Plugin plugin, TableManager tables, GameManager games,
-                      Messages messages, Settings settings, NameCache names) {
+                      Messages messages, Settings settings, NameCache names, Fx fx) {
         this.plugin = plugin;
         this.tables = tables;
         this.games = games;
         this.messages = messages;
         this.settings = settings;
         this.names = names;
+        this.fx = fx;
         this.escrow = new EscrowStore(plugin, messages);
         this.log = new BetLog(plugin, settings.auditLog());
     }
@@ -341,10 +343,7 @@ public final class BetManager implements Listener, GameManager.GameListener {
         escrow.hold(id, s.stakeOf(id));
         log.record("STAKE", s.tableId(), id, p.getName(), List.of(stack), "pot=" + s.potSize());
 
-        Location table = potLocation(tableOf(s));
-        if (table != null) {
-            p.getWorld().playSound(table, Sound.ENTITY_ITEM_PICKUP, 0.7f, 0.8f);
-        }
+        fx.staked(potLocation(tableOf(s)));
         broadcast(s, messages.get("bet.staked",
                 "player", p.getName(),
                 "amount", stack.getAmount(),
@@ -512,6 +511,7 @@ public final class BetManager implements Listener, GameManager.GameListener {
         int challenge = settings.rideChallengeSeconds();
         broadcast(s, messages.get("bet.rides", "player", p.getName(), "items", s.potSize()));
         broadcast(s, messages.get("bet.match-it", "seconds", challenge));
+        fx.letItRide(potLocation(tableOf(s)));
         log.note("RIDE", s.tableId(), "rider=" + p.getName() + " pot=" + s.potSize());
         redraw(s);
         UUID rider = p.getUniqueId();
@@ -583,10 +583,7 @@ public final class BetManager implements Listener, GameManager.GameListener {
         log.record("PAYOUT", s.tableId(), winner, name(winner), pot, "hand=" + s.handNumber());
         broadcast(s, messages.get("bet.collects",
                 "player", name(winner), "items", EscrowStore.count(pot)));
-        Player w = Bukkit.getPlayer(winner);
-        if (w != null) {
-            w.getWorld().playSound(w.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 0.8f, 1.4f);
-        }
+        fx.jackpot(potLocation(tableOf(s)), Bukkit.getPlayer(winner));
         close(s);
     }
 

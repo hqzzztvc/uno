@@ -7,6 +7,7 @@ import com.unoplugin.debug.CardTester;
 import com.unoplugin.game.GameManager;
 import com.unoplugin.hand.HandManager;
 import com.unoplugin.table.TableManager;
+import com.unoplugin.util.Fx;
 import com.unoplugin.util.Messages;
 import com.unoplugin.util.NameCache;
 import com.unoplugin.util.ResourcePackSender;
@@ -28,6 +29,7 @@ public final class UnoPlugin extends JavaPlugin {
 
     private Settings settings;
     private Messages messages;
+    private Fx fx;
     private NameCache names;
     private TableManager tableManager;
     private CardTester cardTester;
@@ -40,27 +42,28 @@ public final class UnoPlugin extends JavaPlugin {
         saveDefaultConfig();
         settings = new Settings(this);
         messages = new Messages(this);
+        fx = new Fx(settings);
 
         PluginManager events = getServer().getPluginManager();
 
         names = new NameCache(this);
         events.registerEvents(names, this);
 
-        tableManager = new TableManager(this, messages, settings);
+        tableManager = new TableManager(this, messages, settings, fx);
         events.registerEvents(tableManager, this);
         tableManager.load();
 
         cardTester = new CardTester(this);
 
-        handManager = new HandManager(this, messages);
+        handManager = new HandManager(this, messages, fx);
         events.registerEvents(handManager, this);
 
-        gameManager = new GameManager(this, handManager, messages, settings, names);
+        gameManager = new GameManager(this, handManager, messages, settings, names, fx);
         events.registerEvents(gameManager, this);
         handManager.setCardActions(gameManager);
         gameManager.setTableManager(tableManager);
 
-        betManager = new BetManager(this, tableManager, gameManager, messages, settings, names);
+        betManager = new BetManager(this, tableManager, gameManager, messages, settings, names, fx);
         events.registerEvents(betManager, this);
         gameManager.setGameListener(betManager);
 

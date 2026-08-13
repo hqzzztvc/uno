@@ -10,7 +10,7 @@ the card and whether it's selected) into custom_model_data per slot.
 
 custom_model_data string per slot k:
     "<card>_<tier>"        normal card in that slot at that density tier
-    "<card>_<tier>_sel"    the selected card (rendered front-most, in place)
+    "<card>_<tier>_sel"    the selected card (lifted out of the fan, in place)
     ""                     empty slot
 
 Fan tilt comes from each model's DISPLAY-TRANSFORM rotation (fine angles), so the cards
@@ -64,13 +64,18 @@ def java_constants():
 MAX_SLOTS, DENSITIES = java_constants()
 S = (MAX_SLOTS - 1) // 2
 print(f"HandManager.java: MAX_SLOTS={MAX_SLOTS} DENSITIES={DENSITIES}")
-BASE_TILT_Z = -12.0          # lean the whole fan slightly right
+BASE_TILT_Z = -6.0           # lean the whole fan slightly right
 
 # Locked first-person placement (fanpos 4, slightly lowered). The card is 24 model units
 # tall where the old flat quad was 15, so both scales carry a 15/24 correction and the fan
 # keeps exactly the on-screen size it was tuned to.
+#
+# X pulls the fan away from the right edge of the screen. Vanilla already holds a
+# first-person item ~0.56 blocks right of the eye and translations here are 1/16 block, so
+# at the old -2 the pivot sat two thirds of the way to the edge and the outermost cards —
+# a 24-unit card reaches 0.27 blocks from its pivot — hung off the side of a 4:3 viewport.
 FP_TILT_X = 0
-FP_TRANS = [-2.0, 2.0, 0.5]
+FP_TRANS = [-6.0, 1.0, 0.5]
 FP_SCALE = 0.18125           # 0.29 * 15/24
 TP_TRANS = [0.0, 1.0, 1.5]
 TP_SCALE = 0.2625            # 0.42 * 15/24
@@ -80,7 +85,18 @@ TP_SCALE = 0.2625            # 0.42 * 15/24
 # their cross-section. Display translations are not scaled by the transform's scale, so
 # a 1-unit-thick card needs a step of at least `scale` to clear the card behind it.
 DEPTH_STEP = round(max(FP_SCALE, TP_SCALE), 4)
-SEL_FRONT = round(DEPTH_STEP * ((MAX_SLOTS - 1) // 2 + 1), 4)  # clear of the whole fan
+
+# How the SELECTED card is marked out. It is lifted straight up out of the fan and nudged a
+# few card-thicknesses forward — not shoved to the front of the whole stack, which is what
+# the old fixed `SEL_FRONT` (eleven depth steps, ~0.18 blocks) did.
+#
+# Display translations are absolute blocks/16, not scaled by the card's own 0.18, and a
+# first-person item sits only ~0.7 blocks from the eye: 0.18 of that is a quarter of the way
+# to the camera. Everything on screen then swings outward by the same factor, and the card
+# being looked at was thrown clean off the edge of the screen. Three steps clears the
+# neighbours it actually overlaps; the lift is what makes it read as picked out.
+SEL_POP_Z = round(DEPTH_STEP * 3, 4)
+SEL_LIFT_Y = 2.0
 
 EXCLUDE = {"back", "blank"}
 DECKS = ("deck_10", "deck_50", "deck_100")
@@ -93,9 +109,9 @@ def slot_depth(k):
     return (k - S) * DEPTH_STEP
 
 
-def display(theta, depth):
-    fp_tr = [FP_TRANS[0], FP_TRANS[1], FP_TRANS[2] + depth]
-    tp_tr = [TP_TRANS[0], TP_TRANS[1], TP_TRANS[2] + depth]
+def display(theta, depth, lift=0.0):
+    fp_tr = [FP_TRANS[0], FP_TRANS[1] + lift, FP_TRANS[2] + depth]
+    tp_tr = [TP_TRANS[0], TP_TRANS[1] + lift, TP_TRANS[2] + depth]
     return {
         "firstperson_righthand": {"rotation": [FP_TILT_X, 0, theta], "translation": fp_tr, "scale": [FP_SCALE, FP_SCALE, FP_SCALE]},
         "thirdperson_righthand": {"rotation": [0, 0, theta], "translation": tp_tr, "scale": [TP_SCALE, TP_SCALE, TP_SCALE]},
@@ -103,8 +119,8 @@ def display(theta, depth):
     }
 
 
-def card_model(card, theta, depth):
-    return {"parent": f"uno:item/cards_held/{card}", "display": display(theta, depth)}
+def card_model(card, theta, depth, lift=0.0):
+    return {"parent": f"uno:item/cards_held/{card}", "display": display(theta, depth, lift)}
 
 
 def main():
@@ -133,8 +149,8 @@ def main():
                 with open(os.path.join(d, f"{card}.json"), "w") as f:
                     json.dump(card_model(card, theta, depth), f)
                 with open(os.path.join(d, f"{card}_sel.json"), "w") as f:
-                    # selected sits at a fixed front depth -> always on top, consistent size
-                    json.dump(card_model(card, theta, SEL_FRONT), f)
+                    # selected keeps its own place in the fan and rises out of it
+                    json.dump(card_model(card, theta, depth + SEL_POP_Z, SEL_LIFT_Y), f)
 
     empty_ref = {"type": "minecraft:model", "model": "uno:item/held/empty"}
 

@@ -79,6 +79,16 @@ public final class PileRenderer {
         addToDiscard(firstTop);
     }
 
+    /** The discard heap's spot on the felt — the table's focal point for sounds and particles. */
+    public Location discardLocation() {
+        return discardLoc.clone();
+    }
+
+    /** The draw pile's spot on the felt. */
+    public Location drawLocation() {
+        return drawLoc.clone();
+    }
+
     /** Step the draw pile down to the deck model that matches the remaining count. */
     public void setDrawCount(int count) {
         if (drawLoc.getWorld() == null) {
