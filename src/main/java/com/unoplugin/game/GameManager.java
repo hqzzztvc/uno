@@ -114,13 +114,21 @@ public final class GameManager implements Listener, HandManager.CardActions {
             messages.send(host, "game.already-in-game");
             return;
         }
+        UnoTable table = tableManager == null ? null : tableManager.seatedTable(host.getUniqueId());
+        // Two hands dealt at one table put both sets of piles on the same square of felt and
+        // leave BusyCheck unable to say which one is holding it. startSeated already refuses
+        // this by way of every seated player's playerGame; a solo bot game has to check the
+        // table itself, because the other hand may be nobody who is sitting here now.
+        if (table != null && hasGameAtTable(table.id())) {
+            messages.send(host, "game.table-in-use");
+            return;
+        }
         botCount = Math.max(1, Math.min(9, botCount));
         List<UUID> players = new ArrayList<>();
         players.add(host.getUniqueId());
         for (int i = 1; i <= botCount; i++) {
             players.add(newBot("Bot " + i));
         }
-        UnoTable table = tableManager == null ? null : tableManager.seatedTable(host.getUniqueId());
         launch(players, table, host);
     }
 
@@ -814,6 +822,14 @@ public final class GameManager implements Listener, HandManager.CardActions {
         UnoGame game = gameOf(id);
         if (game == null) {
             return false;
+        }
+        if (game.isOver()) {
+            // Won already, and only sitting out the celebration delay before endGame runs.
+            // Forfeiting here tells the bet layer somebody bailed on a hand that is decided —
+            // which costs them their stake on paper and prints it to the whole table — while
+            // UnoGame.forfeit itself no-ops on an over game. Let the scheduled endGame settle
+            // everyone, exactly as it would have if they had waited two seconds.
+            return true;
         }
         broadcast(game, messages.get("game.left", "player", player.getName()));
         playerGame.remove(id);

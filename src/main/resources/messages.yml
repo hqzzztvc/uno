@@ -76,6 +76,7 @@ game:
   controls: "<gray>A/D or wheel = pick · <green>left-click/Q = play <gray>· <yellow>right-click/F = draw"
   already-in-game: "<yellow>You're already in a game. Finish it first."
   other-in-game: "<red><player> is already in a game."
+  table-in-use: "<yellow>A hand is already running at that table. Wait for it to finish, or move to another table."
   sit-first: "<yellow>Sit at a table first <gray>(stand next to one and <gold>/uno join<gray>)<yellow>, then run <gold>/uno start<yellow>."
   tables-unavailable: "<red>Tables aren't available right now."
   need-players: "<yellow>Need at least 2 players — sit a friend down, or add bots: <gold>/uno start <bots><yellow>."
