@@ -38,14 +38,14 @@ public class UnoTable {
         DARK_CHERRY("darkcherry", "Dark Cherry Table",
                 Material.CHERRY_LOG, Material.PALE_OAK_LOG,
                 Material.CHERRY_LOG, Material.PALE_OAK_STAIRS),
-        /** Oak chequer with dark oak seats. */
-        OAK("oak", "Oak Table",
-                Material.OAK_LOG, Material.STRIPPED_OAK_LOG,
-                Material.OAK_LOG, Material.DARK_OAK_STAIRS),
-        /** Pale stripped oak against birch, oak seats. */
-        BIRCH("birch", "Birch Table",
-                Material.STRIPPED_OAK_LOG, Material.BIRCH_LOG,
-                Material.STRIPPED_OAK_LOG, Material.OAK_STAIRS);
+        /** The dark pair: unstripped spruce and oak, dark oak seats. */
+        SPRUCE("spruce", "Spruce Table",
+                Material.SPRUCE_LOG, Material.OAK_LOG,
+                Material.SPRUCE_LOG, Material.DARK_OAK_STAIRS),
+        /** The same two woods stripped — spruce on the corners and centre, oak on the edges. */
+        STRIPPED_OAK("strippedoak", "Stripped Oak Table",
+                Material.STRIPPED_SPRUCE_LOG, Material.STRIPPED_OAK_LOG,
+                Material.STRIPPED_SPRUCE_LOG, Material.SPRUCE_STAIRS);
 
         private final String alias;
         private final String displayName;

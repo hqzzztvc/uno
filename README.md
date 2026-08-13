@@ -40,7 +40,7 @@ Build a table, sit down, deal:
 
 ```
 /uno createtable <theme>   # admin — builds a table on the ground in front of you
-                       # cherry | darkcherry | oak | birch
+                       # cherry | darkcherry | spruce | strippedoak
 /uno join              # stand next to a table and take the nearest free seat
 /uno leave             # get up (Shift does the same)
 /uno quit              # drop out of the hand you're in — others play on
@@ -65,8 +65,8 @@ dark frame is the bark, not a separate block.
 |---|---|---|
 | `cherry` | stripped cherry & stripped pale oak | cherry stairs |
 | `darkcherry` | cherry & pale oak (dark bark sides) | pale oak stairs |
-| `oak` | oak & stripped oak | dark oak stairs |
-| `birch` | stripped oak & birch | oak stairs |
+| `spruce` | spruce & oak | dark oak stairs |
+| `strippedoak` | stripped spruce & stripped oak | spruce stairs |
 
 ### Controls
 
@@ -136,7 +136,7 @@ All subcommands tab-complete; admin ones are hidden from players who can't use t
 | `/uno stop` | `uno.play` | End the hand at your table (refused while a pot is riding) |
 | `/uno version` | `uno.play` | Plugin version |
 | `/gamble …` | `uno.gamble` | Wagering — see above (aliases: `/bet`, `/ante`, `/letitride`) |
-| `/uno createtable <theme>` | `uno.admin` | Build a table in front of you (cherry, darkcherry, oak, birch) |
+| `/uno createtable <theme>` | `uno.admin` | Build a table in front of you (cherry, darkcherry, spruce, strippedoak) |
 | `/uno remove` | `uno.admin` | Remove the nearest table within 5 blocks (refused mid-hand) |
 | `/uno list` | `uno.admin` | Every placed table: id, world, coordinates, occupancy |
 | `/uno info` | `uno.admin` | Running hands and open pots |

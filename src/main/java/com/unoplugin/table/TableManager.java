@@ -24,6 +24,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.EntityDismountEvent;
+import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.world.WorldLoadEvent;
 import org.bukkit.persistence.PersistentDataType;
@@ -32,6 +33,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -44,9 +46,10 @@ import java.util.UUID;
  * Owns every placed table: the registry, persistence, building and removing the blocks a
  * table is made of, and seating players at it.
  *
- * <p>A table is REAL BLOCKS — nine logs and four stairs — not display entities. That is why
- * there is no chunk bookkeeping here: blocks are saved with their chunk and come back on
- * their own.
+ * <p>A table is REAL BLOCKS — nine logs and four stairs — not display entities, so nothing
+ * here spawns or despawns visuals: blocks are saved with their chunk and come back on their
+ * own. The one chunk hook left ({@link #onChunkLoad}) is a repair, not a respawn — it re-lays
+ * a table whose blocks went missing while nobody was looking, after a retheme or a griefing.
  */
 public class TableManager implements Listener {
 
@@ -68,6 +71,14 @@ public class TableManager implements Listener {
      * they are written back verbatim on save and materialised if their world turns up.
      */
     private final List<PendingTable> pending = new ArrayList<>();
+    /**
+     * Anchor chunk -> tables in it, so ChunkLoadEvent isn't a scan of every table.
+     *
+     * <p>Chunk load is one of the hottest events on a busy server. This only exists so a
+     * table whose blocks are missing gets them back the moment its chunk comes up, rather
+     * than waiting for someone to sit at it.
+     */
+    private final Map<Long, List<UnoTable>> byChunk = new HashMap<>();
     private final NamespacedKey idKey;       // tags spawned entities with their table id
     private final NamespacedKey vehicleKey;  // tags the invisible seat mount
     private final File dataFile;
@@ -168,8 +179,12 @@ public class TableManager implements Listener {
             "CASINO", UnoTable.Type.CHERRY,      // the single pre-variant table
             "BLOSSOM", UnoTable.Type.CHERRY,     // renamed after the blocks it is made of
             "MIDNIGHT", UnoTable.Type.DARK_CHERRY,
-            "TAVERN", UnoTable.Type.OAK,
-            "HOMESTEAD", UnoTable.Type.BIRCH);
+            // The oak/spruce pair was mis-built from oak+birch before; both rows move to the
+            // variant that now holds the woods they were meant to have.
+            "TAVERN", UnoTable.Type.SPRUCE,
+            "OAK", UnoTable.Type.SPRUCE,
+            "HOMESTEAD", UnoTable.Type.STRIPPED_OAK,
+            "BIRCH", UnoTable.Type.STRIPPED_OAK);
     /** Set once per load so the migration logs a single line, not one per table. */
     private boolean loggedMigration = false;
 
@@ -226,6 +241,7 @@ public class TableManager implements Listener {
      */
     private void register(UnoTable table) {
         tables.put(table.id(), table);
+        byChunk.computeIfAbsent(chunkKey(table.anchor()), k -> new ArrayList<>()).add(table);
         table.setSpawned(true);
         // ONLY if the chunk is already up. getBlockAt() loads a chunk synchronously, so
         // probing every table here dragged the whole table list off disk on the main thread
@@ -233,6 +249,31 @@ public class TableManager implements Listener {
         // player actually walks up to it, by which point its chunk is loaded anyway.
         if (isAnchorChunkLoaded(table) && repairIfNeeded(table)) {
             rebuilt++;
+        }
+    }
+
+    private static long chunkKey(Location loc) {
+        return ((long) (loc.getBlockX() >> 4) << 32) | ((loc.getBlockZ() >> 4) & 0xffffffffL);
+    }
+
+    /**
+     * A chunk came up — re-lay any table in it whose blocks aren't there.
+     *
+     * <p>Cheap by construction: a map lookup that misses on virtually every chunk load, and
+     * on a hit, one block read per table. Only a table that has actually lost its blocks
+     * (retheme, griefing while the server was down, the old entity build) does any work.
+     */
+    @EventHandler
+    public void onChunkLoad(ChunkLoadEvent event) {
+        List<UnoTable> here = byChunk.get(
+                ((long) event.getChunk().getX() << 32) | (event.getChunk().getZ() & 0xffffffffL));
+        if (here == null) {
+            return;
+        }
+        for (UnoTable t : List.copyOf(here)) {
+            if (event.getWorld().equals(t.anchor().getWorld())) {
+                repairIfNeeded(t);
+            }
         }
     }
 
@@ -255,8 +296,16 @@ public class TableManager implements Listener {
             return false;
         }
         Settings.TableBlocks palette = settings.tableBlocks(table.type());
-        Material standing = w.getBlockAt(table.anchor()).getType();
-        if (standing == palette.topPrimary() || standing == palette.topSecondary()) {
+        Location a = table.anchor();
+        // Sample one cell of each kind, not just the anchor. Testing the anchor against
+        // "either top colour" let a retheme through whenever the new palette happened to
+        // reuse the old material — swapping oak+stripped-oak for spruce+oak left every table
+        // standing, because its old centre block was the new secondary. Each sample is
+        // compared against the exact material that cell must hold.
+        boolean ok = w.getBlockAt(a).getType() == palette.topPrimary()
+                && w.getBlockAt(a.clone().add(1, 0, 0)).getType() == palette.topSecondary()
+                && w.getBlockAt(table.seats().get(0)).getType() == palette.seat();
+        if (ok) {
             return false;
         }
         buildBlocks(table);
@@ -365,6 +414,7 @@ public class TableManager implements Listener {
             return PlaceResult.NO_ROOM;
         }
         tables.put(table.id(), table);
+        byChunk.computeIfAbsent(chunkKey(anchor), k -> new ArrayList<>()).add(table);
         buildBlocks(table);
         lastBuilt = table;
         save();
@@ -457,6 +507,10 @@ public class TableManager implements Listener {
         }
         clearBlocks(table);
         tables.remove(table.id());
+        List<UnoTable> here = byChunk.get(chunkKey(table.anchor()));
+        if (here != null && here.remove(table) && here.isEmpty()) {
+            byChunk.remove(chunkKey(table.anchor()));
+        }
         save();
     }
 
@@ -557,8 +611,7 @@ public class TableManager implements Listener {
         World w = table.anchor().getWorld();
         if (w != null) {
             Settings.TableBlocks palette = settings.tableBlocks(table.type());
-            Set<Material> ours = Set.of(palette.topPrimary(), palette.topSecondary(),
-                    palette.frame(), palette.seat());
+            Set<Material> ours = palette.materials();
             for (Location loc : footprint(table)) {
                 Block b = w.getBlockAt(loc);
                 if (ours.contains(b.getType())) {

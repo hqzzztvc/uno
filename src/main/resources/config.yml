@@ -86,25 +86,25 @@ tables:
       frame: CHERRY_LOG
       seat: PALE_OAK_STAIRS
 
-  # Oak chequer, dark oak seats.
-  oak:
+  # The dark pair — unstripped spruce and oak, dark oak seats.
+  spruce:
     min-players: 2
     max-players: 4
     blocks:
-      top-primary: OAK_LOG
-      top-secondary: STRIPPED_OAK_LOG
-      frame: OAK_LOG
+      top-primary: SPRUCE_LOG
+      top-secondary: OAK_LOG
+      frame: SPRUCE_LOG
       seat: DARK_OAK_STAIRS
 
-  # Pale stripped oak against birch, oak seats.
-  birch:
+  # The same two woods stripped — spruce on the corners and centre, oak on the edges.
+  strippedoak:
     min-players: 2
     max-players: 4
     blocks:
-      top-primary: STRIPPED_OAK_LOG
-      top-secondary: BIRCH_LOG
-      frame: STRIPPED_OAK_LOG
-      seat: OAK_STAIRS
+      top-primary: STRIPPED_SPRUCE_LOG
+      top-secondary: STRIPPED_OAK_LOG
+      frame: STRIPPED_SPRUCE_LOG
+      seat: SPRUCE_STAIRS
 
 # ---- Gambling ("Let It Ride") ----
 #

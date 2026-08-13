@@ -38,7 +38,7 @@ plugin:
   help-gamble: "<yellow>/gamble <gray>— wager items on a hand (see <yellow>/gamble help<gray>)"
   help-version: "<yellow>/uno version <gray>— plugin version"
   help-admin-header: "<dark_gray>— admin —"
-  help-createtable: "<yellow>/uno createtable <theme> <gray>— build a table in front of you (blossom, tavern, midnight, homestead)"
+  help-createtable: "<yellow>/uno createtable <theme> <gray>— build a table in front of you (cherry, darkcherry, spruce, strippedoak)"
   help-remove: "<yellow>/uno remove <gray>— remove the nearest table"
   help-list: "<yellow>/uno list <gray>— every placed table"
   help-info: "<yellow>/uno info <gray>— running games and open pots"

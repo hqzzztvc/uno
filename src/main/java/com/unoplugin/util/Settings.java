@@ -13,9 +13,11 @@ import org.bukkit.plugin.Plugin;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Typed view over config.yml.
@@ -46,7 +48,19 @@ public final class Settings {
      * one object rather than four parallel lookups that could drift out of step.
      */
     public record TableBlocks(Material topPrimary, Material topSecondary,
-                              Material frame, Material seat) {}
+                              Material frame, Material seat) {
+
+        /**
+         * The distinct materials this table is built from — what {@code /uno remove} clears.
+         *
+         * <p>EnumSet, never {@code Set.of}: every variant uses the same wood for its frame as
+         * for its top, and {@code Set.of} throws {@code IllegalArgumentException} on a
+         * duplicate element, which broke removing any table at all.
+         */
+        public Set<Material> materials() {
+            return EnumSet.of(topPrimary, topSecondary, frame, seat);
+        }
+    }
 
     // gambling
     private boolean gamblingEnabled;
