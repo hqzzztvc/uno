@@ -108,8 +108,6 @@
       "Bash(rm -rf /tmp/uvf8)",
       "Bash(mkdir -p /tmp/uvf8)",
       "Bash(ffmpeg -i /tmp/uv8.mov -vf \"fps=3,scale=1100:-2\" /tmp/uvf8/f%03d.png -hide_banner -loglevel error)",
-      "Bash(ipconfig getifaddr *)",
-      "Bash(echo \"LAN IP: $\\(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null\\)\")",
       "Bash(curl -s --max-time 4 ifconfig.me)",
       "Bash(echo \"PUBLIC IP: $\\(curl -s --max-time 4 ifconfig.me 2>/dev/null\\)\")",
       "Bash(command -v tailscale)",
@@ -175,7 +173,10 @@
       "Bash(/bin/sleep 1)",
       "Bash(curl -s -o /dev/null -w 'github HTTP %{http_code}\\\\n' --max-time 8 https://github.com)",
       "Bash(scutil --dns)",
-      "Bash(networksetup -getinfo Wi-Fi)"
+      "Bash(networksetup -getinfo Wi-Fi)",
+      "Bash(lsof -nP -iTCP -sTCP:LISTEN -a -p 9203)",
+      "Bash(/usr/libexec/ApplicationFirewall/socketfilterfw --getblockall)",
+      "Bash(/usr/libexec/ApplicationFirewall/socketfilterfw --listapps)"
     ]
   }
 }

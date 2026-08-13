@@ -818,6 +818,13 @@ public final class GameManager implements Listener, HandManager.CardActions {
         broadcast(game, messages.get("game.left", "player", player.getName()));
         playerGame.remove(id);
         handManager.hide(player);
+        // Hide the bar HERE, not in endGame: game.forfeit() drops the leaver out of players(),
+        // so by the time the hand ends they are no longer in the loop that hides it and the bar
+        // is stranded on their screen, frozen on the last state, until they relog.
+        BossBar bar = bars.get(game.id());
+        if (bar != null) {
+            player.hideBossBar(bar);
+        }
         if (listener != null) {
             listener.onForfeit(game.id(), id);
         }
