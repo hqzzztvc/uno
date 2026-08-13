@@ -114,12 +114,23 @@ public final class GameManager implements Listener, HandManager.CardActions {
             messages.send(host, "game.already-in-game");
             return;
         }
-        UnoTable table = tableManager == null ? null : tableManager.seatedTable(host.getUniqueId());
+        if (tableManager == null) {
+            messages.send(host, "game.tables-unavailable");
+            return;
+        }
+        // A hand needs a table to be played on. Without one the piles land on the ground
+        // wherever the caller happens to be standing — cards in the dirt, nothing for anyone
+        // else to walk up to, and no table id for BusyCheck to protect the hand with.
+        UnoTable table = tableManager.seatedTable(host.getUniqueId());
+        if (table == null) {
+            messages.send(host, "game.sit-first-play");
+            return;
+        }
         // Two hands dealt at one table put both sets of piles on the same square of felt and
         // leave BusyCheck unable to say which one is holding it. startSeated already refuses
         // this by way of every seated player's playerGame; a solo bot game has to check the
         // table itself, because the other hand may be nobody who is sitting here now.
-        if (table != null && hasGameAtTable(table.id())) {
+        if (hasGameAtTable(table.id())) {
             messages.send(host, "game.table-in-use");
             return;
         }
