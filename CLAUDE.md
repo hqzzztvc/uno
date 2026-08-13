@@ -69,6 +69,12 @@ place in the plugin that touches `getConfig()`, so "is this key wired up?" is an
 one file. If you add a key, add it there too; if you delete code, delete the key. `/uno reload`
 re-reads both `config.yml` and `messages.yml`.
 
+Every sound and particle goes through `util/Fx` the same way, so "what does this plugin sound
+like?" is one file rather than a grep for `playSound`. Call sites name the *event*
+(`fx.cardPlayed(...)`), never the sound. Everything in there is bounded — no loops, nothing that
+scales with the number of players at the table — and `effects.sounds` / `effects.particles` /
+`effects.volume` in config.yml turn it down or off.
+
 Player-facing strings all live in `src/main/resources/messages.yml` and go through `util/Messages`
 (MiniMessage). There are **no `§` codes and no `sendMessage(String)` calls** left in the source —
 keep it that way. The jar's copy of `messages.yml` is registered as the defaults, so an admin's file
@@ -113,7 +119,18 @@ python3 generate_held_fan.py      # the ~6800-file uno:held composite fan (model
   wrong-angle cards.
 - The three density tiers all earn their place: `chooseTier` picks tier 0 for hands up to 8 cards,
   tier 1 for 9-14 and tier 2 for 15+. Dropping one either overflows the screen on big hands or
-  cramps small ones.
+  cramps small ones. `HandFanTest` pins those boundaries and holds every hand size inside
+  `MAX_SPAN`, because the pack is baked from these numbers and a bad one only shows up in-game.
+- **The fan has to stay inside the viewport, and the numbers that keep it there are not
+  obvious.** Vanilla holds a first-person item ~0.56 blocks right of the eye and ~0.72 in front;
+  display translations are 1/16 block, applied *before* rotation and never scaled by the
+  transform's own scale. So `FP_TRANS[0]` has to pull the fan back left, `MAX_SPAN` has to keep
+  the outermost card's 0.27-block reach from leaning off the right edge, and — the one that bit
+  — a forward `translation` on the *selected* card moves it toward the camera, which magnifies
+  every screen offset in the fan. The old fixed `SEL_FRONT` (11 depth steps, 0.18 blocks, on an
+  item 0.72 from the eye) put the selected card up to 1.5× the half-width off the side of the
+  screen. Selection is now `slot_depth(k) + SEL_POP_Z` plus a `SEL_LIFT_Y` straight up: the card
+  rises out of the fan and stays where the player can see it.
 - `generate_hand_model.sh` builds the static 7-card `uno:hand` item used only by the `/uno hand` debug
   command; it is not part of gameplay. All five `CardTester`/fan debug commands require both
   `uno.admin` **and** `debug: true` in config.yml — they spawn per-tick display entities and have no
@@ -162,7 +179,8 @@ TableManager ──────────────► GameManager ───
       │       (held fan, input)   ◄── GameListener ────────────┘
       └── BusyCheck: "is a hand or a pot running at this table?" ──┘
 
-util/  Settings (all config)  Messages (all text)  NameCache (UUID→name, never blocks)
+util/  Settings (all config)  Messages (all text)  Fx (all sound + particles)
+       NameCache (UUID→name, never blocks)
 command/  UnoCommand (routing + permissions + tab completion), GambleCommand
 ```
 
@@ -296,17 +314,37 @@ Two commands, and the difference between them is the wagering rule:
 ### Input ownership
 
 While a player has an active fan, `HandManager` takes over their controls and cancels the vanilla
-behaviour: A/D polled every tick via `Player.getCurrentInput()`, scroll wheel (`PlayerItemHeldEvent`
-cancelled to pin the fan to one hotbar slot), left-click/Q = play, right-click/F = draw, block
-break/place blocked, and `EntityDamageByEntityEvent` cancelled (that left-click is also a punch —
-without this, playing a card hits whoever is in front of you). Left-click and interact events
-double-fire, hence the 150 ms debounce.
+behaviour: A/D scroll the selection, scroll wheel too (`PlayerItemHeldEvent` cancelled to pin the
+fan to one hotbar slot; a number key jumps several slots at once, so only a ±1 move counts as a
+scroll), left-click/Q = play, right-click/F = draw, block break/place blocked, and
+`EntityDamageByEntityEvent` cancelled (that left-click is also a punch — without this, playing a
+card hits whoever is in front of you). Left-click fires as both an animation and an interact and
+repeats while held, hence the 250 ms play/draw debounce.
+
+**A/D is edge-driven, not tick-driven.** `PlayerInputEvent` arrives when the key changes state, so
+a tap lands even when the server is running at 5 TPS — polling `getCurrentInput()` once a tick
+samples whatever the key happens to be *now* and silently eats taps during a lag spike. The
+per-tick poll that remains does the three things the event can't: key-repeat while A/D is held,
+a fallback edge check (`applyInput` is idempotent — only a change from the stored state is a
+press), and `resync`, which puts the fan back in the player's hand after a respawn, a desync or
+another plugin. `updateItem` also skips the slot packet when the model strings didn't actually
+change, which is most of the time: every game event re-renders every hand at the table.
 
 **The fan must never cost a player an item.** `claimSlot()` prefers an empty hotbar slot, then moves
 the held stack into free inventory space, and only holds it in `Hand.displaced` when the inventory is
 completely full — which `hide()`, `onQuit()`, `onDeath()` and `shutdown()` all give back. `onDeath`
 also strips the fan from the drop list (else it lies on the ground as a pickup-able 21-card item) and
 adds any displaced stack to the drops, so death behaves exactly as if the fan had never moved it.
+
+Two rules keep that true, and both are easy to undo by accident:
+
+- **`updateItem` may only ever write into a slot that is empty or already holds a fan**
+  (`ensureSlot`). It runs several times a second while a player scrolls, so writing blind
+  destroys whatever landed in that slot meanwhile — a respawn, an escrow return, another plugin
+  — and an item destroyed that way is gone for good.
+- **`restoreDisplaced` puts the stack back in the slot it came out of.** That slot is exactly the
+  room it needs once the fan leaves, so a full inventory costs nothing; `addItem` (and the drop
+  on the ground it falls back to) is only for a slot that has since been taken.
 
 `InventoryClickEvent` / `InventoryDragEvent` cancel anything touching a fan item anywhere — including
 number-key and offhand swaps, and including stray fans from a finished game. Without it a player can

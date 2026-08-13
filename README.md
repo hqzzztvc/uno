@@ -75,9 +75,11 @@ controls — you can't break or place blocks.
 
 | Input | Action |
 |---|---|
-| **A** / **D**, or scroll wheel | Move the selection along the fan |
+| **A** / **D**, or scroll wheel | Move the selection along the fan (hold to run along it) |
 | **Left-click** or **Q** | Play the selected card |
 | **Right-click** or **F** | Draw a card |
+
+The selected card lifts out of the fan so you can see what you're about to play.
 
 The bossbar shows the top card, the active colour, whose turn it is, the direction of play and how
 many cards are left in the deck. Playing a wild opens a colour picker; closing it without choosing
@@ -172,6 +174,10 @@ gambling:
   ride:
     window-seconds: 20         # winner's decision window (no answer = cash out)
     challenge-seconds: 90      # how long the table has to match a riding pot
+effects:
+  sounds: true                 # card snaps, turn chimes, the UNO call
+  particles: true              # coloured card dust, fireworks over a winner
+  volume: 1.0                  # multiplier on every sound (0-2)
 ```
 
 Player-facing text lives in `plugins/UNO/messages.yml` (MiniMessage formatting) — reword, restyle
@@ -207,10 +213,11 @@ src/main/java/com/unoplugin/
   hand/HandManager      the held 3D card fan + all player input while it's up
   table/                UnoTable geometry + variant palettes, TableManager (placement, seats, visuals)
   bet/                  BetManager, BetSession, EscrowStore, PotRenderer, BetLog
-  util/                 Settings (config), Messages (messages.yml), NameCache, ResourcePackSender
+  util/                 Settings (config), Messages (messages.yml), Fx (sound + particles),
+                        NameCache, ResourcePackSender
   debug/CardTester      throwaway visual test helpers, gated behind `debug: true`
 
-src/test/java/com/unoplugin/game/   JUnit tests for the rules layer
+src/test/java/com/unoplugin/       JUnit tests: the rules layer, plus the fan's density tiers
 
 uno_json/                               the card geometry (hand-authored Blockbench exports)
 

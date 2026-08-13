@@ -5,6 +5,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
+import net.kyori.adventure.title.Title;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.Plugin;
 
@@ -14,6 +15,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -104,6 +106,20 @@ public final class Messages {
             return;
         }
         to.sendActionBar(get(key, placeholders));
+    }
+
+    /**
+     * Render and show as a title with a subtitle, on the timings every title in the plugin
+     * uses. Either half may be blank in messages.yml; blanking both silences the title.
+     */
+    public void title(Audience to, String mainKey, String subKey, Object... placeholders) {
+        if (to == null || (isBlank(mainKey) && isBlank(subKey))) {
+            return;
+        }
+        Component main = isBlank(mainKey) ? Component.empty() : get(mainKey, placeholders);
+        Component sub = isBlank(subKey) ? Component.empty() : get(subKey, placeholders);
+        to.showTitle(Title.title(main, sub, Title.Times.times(
+                Duration.ofMillis(200), Duration.ofMillis(1600), Duration.ofMillis(400))));
     }
 
     private TagResolver resolvers(Object... placeholders) {

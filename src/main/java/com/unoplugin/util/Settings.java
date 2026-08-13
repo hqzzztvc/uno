@@ -60,6 +60,11 @@ public final class Settings {
     private int rideWindowSeconds;
     private int rideChallengeSeconds;
 
+    // effects
+    private boolean sounds;
+    private boolean particles;
+    private float effectVolume;
+
     // misc
     private boolean debug;
     private String packLink;
@@ -116,6 +121,11 @@ public final class Settings {
         rideEnabled = c.getBoolean("gambling.ride.enabled", true);
         rideWindowSeconds = Math.max(1, c.getInt("gambling.ride.window-seconds", 20));
         rideChallengeSeconds = Math.max(1, c.getInt("gambling.ride.challenge-seconds", 90));
+
+        sounds = c.getBoolean("effects.sounds", true);
+        particles = c.getBoolean("effects.particles", true);
+        // Above 2 is just distortion, and 0 is what `sounds: false` is for.
+        effectVolume = (float) Math.max(0.0, Math.min(2.0, c.getDouble("effects.volume", 1.0)));
 
         debug = c.getBoolean("debug", false);
         packLink = c.getString("resource-pack.url.link", "");
@@ -262,6 +272,21 @@ public final class Settings {
             return state.getBlockState() instanceof org.bukkit.block.Container;
         }
         return false;
+    }
+
+    // ----------------------------------------------------------------- effects
+
+    public boolean sounds() {
+        return sounds;
+    }
+
+    public boolean particles() {
+        return particles;
+    }
+
+    /** Multiplier applied to every sound the plugin plays (0 = silent, 1 = as tuned). */
+    public float effectVolume() {
+        return effectVolume;
     }
 
     // -------------------------------------------------------------------- misc

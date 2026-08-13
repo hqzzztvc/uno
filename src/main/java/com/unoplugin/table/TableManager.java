@@ -1,18 +1,15 @@
 package com.unoplugin.table;
 
 import com.unoplugin.UnoPlugin;
+import com.unoplugin.util.Fx;
 import com.unoplugin.util.Messages;
 import com.unoplugin.util.Settings;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
-import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
-import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
-import org.bukkit.World;
 import org.bukkit.Axis;
+import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
@@ -21,35 +18,21 @@ import org.bukkit.block.data.Orientable;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.ArmorStand;
-import org.bukkit.entity.BlockDisplay;
-import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
-import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.EntityDismountEvent;
-import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
-import org.bukkit.event.world.ChunkLoadEvent;
-import org.bukkit.event.world.ChunkUnloadEvent;
 import org.bukkit.event.world.WorldLoadEvent;
-import org.bukkit.inventory.EquipmentSlot;
-import org.bukkit.inventory.ItemFlag;
-import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
-import org.bukkit.util.Transformation;
-import org.joml.Quaternionf;
-import org.joml.Vector3f;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -58,8 +41,12 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Owns every placed table: the registry, persistence, the placeable item,
- * right-click placement, removal, and chunk-aware visual spawning.
+ * Owns every placed table: the registry, persistence, building and removing the blocks a
+ * table is made of, and seating players at it.
+ *
+ * <p>A table is REAL BLOCKS — nine logs and four stairs — not display entities. That is why
+ * there is no chunk bookkeeping here: blocks are saved with their chunk and come back on
+ * their own.
  */
 public class TableManager implements Listener {
 
@@ -74,6 +61,7 @@ public class TableManager implements Listener {
     private final UnoPlugin plugin;
     private final Messages messages;
     private final Settings settings;
+    private final Fx fx;
     private final Map<UUID, UnoTable> tables = new HashMap<>();
     /**
      * Tables whose world wasn't loaded when we read tables.yml. They are NOT dropped:
@@ -98,6 +86,9 @@ public class TableManager implements Listener {
      */
     private static final double BUILD_DISTANCE = 4.0;
 
+    /** How far a table reaches from its centre: the seats, at 2 blocks. */
+    private static final double FOOTPRINT_REACH = 2.0;
+
     /** How far up or down to look for ground under the build spot before giving up. */
     private static final int GROUND_SEARCH = 4;
 
@@ -106,10 +97,11 @@ public class TableManager implements Listener {
 
     private record Seated(UUID tableId, int index, UUID vehicleId) {}
 
-    public TableManager(UnoPlugin plugin, Messages messages, Settings settings) {
+    public TableManager(UnoPlugin plugin, Messages messages, Settings settings, Fx fx) {
         this.plugin = plugin;
         this.messages = messages;
         this.settings = settings;
+        this.fx = fx;
         this.idKey = new NamespacedKey(plugin, "uno_table_id");
         this.vehicleKey = new NamespacedKey(plugin, "uno_seat_vehicle");
         this.dataFile = new File(plugin.getDataFolder(), "tables.yml");
@@ -235,16 +227,40 @@ public class TableManager implements Listener {
     private void register(UnoTable table) {
         tables.put(table.id(), table);
         table.setSpawned(true);
+        // ONLY if the chunk is already up. getBlockAt() loads a chunk synchronously, so
+        // probing every table here dragged the whole table list off disk on the main thread
+        // during onEnable. Anything still unloaded is repaired by repairIfNeeded() when a
+        // player actually walks up to it, by which point its chunk is loaded anyway.
+        if (isAnchorChunkLoaded(table) && repairIfNeeded(table)) {
+            rebuilt++;
+        }
+    }
+
+    private boolean isAnchorChunkLoaded(UnoTable table) {
+        World w = table.anchor().getWorld();
+        return w != null && w.isChunkLoaded(
+                table.anchor().getBlockX() >> 4, table.anchor().getBlockZ() >> 4);
+    }
+
+    /**
+     * Re-lay a table's blocks if they aren't standing, and say whether that was needed.
+     *
+     * <p>Normally a no-op: the blocks are real, so they were saved with their chunk. It earns
+     * its keep for a table written by the old display-entity build (whose "visuals" died with
+     * the process) and for one somebody bulldozed while the server was down.
+     */
+    private boolean repairIfNeeded(UnoTable table) {
         World w = table.anchor().getWorld();
         if (w == null) {
-            return;
+            return false;
         }
         Settings.TableBlocks palette = settings.tableBlocks(table.type());
         Material standing = w.getBlockAt(table.anchor()).getType();
-        if (standing != palette.topPrimary() && standing != palette.topSecondary()) {
-            buildBlocks(table);
-            rebuilt++;
+        if (standing == palette.topPrimary() || standing == palette.topSecondary()) {
+            return false;
         }
+        buildBlocks(table);
+        return true;
     }
 
     /** Tables whose blocks had to be re-laid this load — logged once, not once per table. */
@@ -322,6 +338,9 @@ public class TableManager implements Listener {
      * player buries them inside their own furniture and leaves them standing on the felt.
      * {@link #BUILD_DISTANCE} puts the near seat about where they are looking.
      */
+    /** The table {@link #createTable} last built, so the caller can light it up. */
+    private UnoTable lastBuilt;
+
     public PlaceResult createTable(UnoTable.Type type, Player player) {
         World w = player.getWorld();
         int limit = settings.maxTablesPerWorld();
@@ -347,6 +366,7 @@ public class TableManager implements Listener {
         }
         tables.put(table.id(), table);
         buildBlocks(table);
+        lastBuilt = table;
         save();
         return PlaceResult.OK;
     }
@@ -586,7 +606,10 @@ public class TableManager implements Listener {
      */
     public void createTableCommand(Player player, UnoTable.Type type) {
         switch (createTable(type, player)) {
-            case OK -> messages.send(player, "table.placed", "variant", type.displayName());
+            case OK -> {
+                messages.send(player, "table.placed", "variant", type.displayName());
+                fx.tablePlaced(lastBuilt.anchor());
+            }
             case TOO_CLOSE -> messages.send(player, "table.too-close");
             case NO_ROOM -> messages.send(player, "table.no-room");
             case WORLD_LIMIT -> messages.send(player, "table.world-limit",
@@ -687,6 +710,7 @@ public class TableManager implements Listener {
             messages.send(player, "table.none-near", "radius", radius);
             return;
         }
+        repairIfNeeded(table);
         int index = nearestFreeSeat(table, player.getLocation());
         if (index < 0) {
             messages.send(player, "table.full");
@@ -772,6 +796,7 @@ public class TableManager implements Listener {
         seated.put(player.getUniqueId(), new Seated(table.id(), index, mount.getUniqueId()));
 
         messages.send(player, "table.sit");
+        fx.seat(player, true);
     }
 
     private void leaveSeat(Player player) {
@@ -793,6 +818,7 @@ public class TableManager implements Listener {
             }
         });
         messages.send(player, "table.leave");
+        fx.seat(player, false);
     }
 
     /** True if the player is currently seated at any table. */
