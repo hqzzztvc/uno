@@ -406,7 +406,13 @@ public final class BetManager implements Listener, GameManager.GameListener {
         redraw(s);
     }
 
-    /** A player disconnected mid-hand: they're out, their stake stays in the pot. */
+    /** Does this table have a live pot? Used to refuse {@code /uno stop} on a wagered hand. */
+    @Override
+    public boolean hasPotAtTable(UUID tableId) {
+        return hasSessionAtTable(tableId);
+    }
+
+    /** A player left mid-hand (disconnect or /uno quit): out, stake stays in the pot. */
     @Override
     public void onForfeit(UUID gameId, UUID player) {
         BetSession s = sessionForGame(gameId);

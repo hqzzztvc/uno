@@ -4,7 +4,7 @@ main: com.unoplugin.UnoPlugin
 # Matches the paper-api the plugin is built against (see pom.xml). Declaring an older
 # version makes Paper apply legacy-material compatibility we neither need nor want.
 api-version: '26.2'
-description: A fully playable multiplayer UNO card game with tables, a fish dealer, and immersive controls.
+description: A fully playable multiplayer UNO card game with placeable tables and immersive controls.
 author: ankur
 folia-supported: false
 

@@ -35,3 +35,6 @@ cards_textures_backup/
 
 # Local test server (see CLAUDE.md); never commit worlds, logs or the server jar
 server/
+
+# Screen recordings dropped in the repo root while testing
+*.mov

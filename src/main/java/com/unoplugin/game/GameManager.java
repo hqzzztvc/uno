@@ -67,8 +67,11 @@ public final class GameManager implements Listener, HandManager.CardActions {
         /** The hand is over. {@code winner} is null if it ended without one, and may be a bot. */
         void onGameEnd(UUID gameId, UUID winner);
 
-        /** A player dropped out mid-hand (disconnect). The hand carries on without them. */
+        /** A player dropped out mid-hand (disconnect or /uno quit). The hand carries on. */
         void onForfeit(UUID gameId, UUID player);
+
+        /** Is there a live pot on this table? Guards /uno stop against settling a wager. */
+        boolean hasPotAtTable(UUID tableId);
     }
 
     public GameManager(Plugin plugin, HandManager handManager, Messages messages,
@@ -206,7 +209,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
             pileYaw = table.yaw();
             double r = Math.toRadians(pileYaw);
             Vector right = new Vector(Math.cos(r), 0, Math.sin(r));
-            // Bottom card sits flush on the casino felt surface.
+            // Bottom card sits flush on the table surface.
             discardLoc = centre.clone().add(right.clone().multiply(-0.38));
             discardLoc.setY(centre.getY() + UnoTable.SURFACE_Y);
             drawLoc = centre.clone().add(right.clone().multiply(0.38));
@@ -658,13 +661,28 @@ public final class GameManager implements Listener, HandManager.CardActions {
      */
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
-        UUID id = event.getPlayer().getUniqueId();
+        forfeit(event.getPlayer());
+    }
+
+    /**
+     * Drop one player out of their hand; everyone else plays on.
+     *
+     * <p>Shared by disconnecting and by {@code /uno quit} ON PURPOSE. Typing the command has to
+     * cost exactly what pulling the plug costs, or "I'm losing" becomes a reason to alt-F4 —
+     * which for a wagered hand means the stake stays in the pot either way
+     * ({@link GameListener#onForfeit}).
+     *
+     * @return false if the player wasn't in a hand at all.
+     */
+    public boolean forfeit(Player player) {
+        UUID id = player.getUniqueId();
         UnoGame game = gameOf(id);
         if (game == null) {
-            return;
+            return false;
         }
-        broadcast(game, messages.get("game.left", "player", event.getPlayer().getName()));
+        broadcast(game, messages.get("game.left", "player", player.getName()));
         playerGame.remove(id);
+        handManager.hide(player);
         if (listener != null) {
             listener.onForfeit(game.id(), id);
         }
@@ -674,7 +692,31 @@ public final class GameManager implements Listener, HandManager.CardActions {
         } else {
             afterMove(game);
         }
+        return true;
     }
+
+    /**
+     * End the whole hand a player is sitting in — {@code /uno stop}.
+     *
+     * <p>Deliberately NOT allowed to settle a wager: ending a hand refunds the pot, so letting a
+     * player who is behind call it off would make {@code /uno stop} a free undo on a losing bet.
+     * With a pot up, {@code /uno quit} (which forfeits) is the only way out for a player, and
+     * {@code /uno end} the only way out for an admin.
+     */
+    public StopResult stopGameOf(Player player) {
+        UUID gameId = gameIdOf(player.getUniqueId());
+        if (gameId == null) {
+            return StopResult.NOT_IN_GAME;
+        }
+        UUID tableId = tableOfGame(gameId);
+        if (tableId != null && listener != null && listener.hasPotAtTable(tableId)) {
+            return StopResult.WAGERED;
+        }
+        return forceEnd(gameId) ? StopResult.OK : StopResult.NOT_IN_GAME;
+    }
+
+    /** Outcome of {@code /uno stop}. */
+    public enum StopResult { OK, NOT_IN_GAME, WAGERED }
 
     private int humansLeft(UnoGame game) {
         int n = 0;

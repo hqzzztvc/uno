@@ -1,7 +1,9 @@
 package com.unoplugin.util;
 
+import com.unoplugin.table.UnoTable;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
+import org.bukkit.Material;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.BlockStateMeta;
@@ -10,8 +12,10 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.Plugin;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * Typed view over config.yml.
@@ -30,9 +34,19 @@ public final class Settings {
 
     // tables
     private int maxTablesPerWorld;
-    private int casinoMinPlayers;
-    private int casinoMaxPlayers;
-    private boolean dealerEnabled;
+    private double joinRadius;
+    private final Map<UnoTable.Type, Integer> tableMin = new EnumMap<>(UnoTable.Type.class);
+    private final Map<UnoTable.Type, Integer> tableMax = new EnumMap<>(UnoTable.Type.class);
+    private final Map<UnoTable.Type, TableBlocks> tableBlocks = new EnumMap<>(UnoTable.Type.class);
+
+    /**
+     * A variant's resolved block palette: the enum defaults with any config override applied.
+     *
+     * <p>Kept as its own type so {@link com.unoplugin.table.TableManager} builds a table from
+     * one object rather than four parallel lookups that could drift out of step.
+     */
+    public record TableBlocks(Material topPrimary, Material topSecondary,
+                              Material frame, Material seat) {}
 
     // gambling
     private boolean gamblingEnabled;
@@ -70,9 +84,22 @@ public final class Settings {
         }
 
         maxTablesPerWorld = Math.max(0, c.getInt("tables.max-per-world", 0));
-        casinoMinPlayers = clamp(c.getInt("tables.casino.min-players", 4), 2, 10);
-        casinoMaxPlayers = clamp(c.getInt("tables.casino.max-players", 6), casinoMinPlayers, 10);
-        dealerEnabled = c.getBoolean("dealer.enabled", true);
+        joinRadius = Math.max(1.0, c.getDouble("tables.join-radius", 4.0));
+        tableMin.clear();
+        tableMax.clear();
+        tableBlocks.clear();
+        for (UnoTable.Type t : UnoTable.Type.values()) {
+            String base = "tables." + t.alias() + ".";
+            int min = clamp(c.getInt(base + "min-players", 2), 2, 4);
+            int max = clamp(c.getInt(base + "max-players", 4), min, 4);
+            tableMin.put(t, min);
+            tableMax.put(t, max);
+            tableBlocks.put(t, new TableBlocks(
+                    material(c, base + "blocks.top-primary", t.topPrimary()),
+                    material(c, base + "blocks.top-secondary", t.topSecondary()),
+                    material(c, base + "blocks.frame", t.frame()),
+                    material(c, base + "blocks.seat", t.seat())));
+        }
 
         gamblingEnabled = c.getBoolean("gambling.enabled", true);
         anteSeconds = Math.max(0, c.getInt("gambling.ante-seconds", 300));
@@ -101,6 +128,27 @@ public final class Settings {
         return Math.max(min, Math.min(max, value));
     }
 
+    /**
+     * Read a block material by name, falling back to the variant's default.
+     *
+     * <p>A typo in a retheme should cost you that one block, not the table: an unknown or
+     * non-block name is logged and the default stands, because returning null here would
+     * surface as a NPE inside the chunk-load handler that rebuilds every table in range.
+     */
+    private Material material(FileConfiguration c, String path, Material fallback) {
+        String raw = c.getString(path);
+        if (raw == null || raw.isBlank()) {
+            return fallback;
+        }
+        Material m = Material.matchMaterial(raw.trim());
+        if (m == null || !m.isBlock()) {
+            plugin.getLogger().warning(
+                    "config.yml " + path + ": '" + raw + "' is not a block — using " + fallback + ".");
+            return fallback;
+        }
+        return m;
+    }
+
     // ---------------------------------------------------------------- gameplay
 
     public int startingHandSize() {
@@ -121,16 +169,23 @@ public final class Settings {
         return maxTablesPerWorld;
     }
 
-    public int casinoMinPlayers() {
-        return casinoMinPlayers;
+    /** How close a player must stand to a table for {@code /uno join} to seat them. */
+    public double joinRadius() {
+        return joinRadius;
     }
 
-    public int casinoMaxPlayers() {
-        return casinoMaxPlayers;
+    public int tableMinPlayers(UnoTable.Type type) {
+        return tableMin.getOrDefault(type, 2);
     }
 
-    public boolean dealerEnabled() {
-        return dealerEnabled;
+    public int tableMaxPlayers(UnoTable.Type type) {
+        return tableMax.getOrDefault(type, 4);
+    }
+
+    /** The variant's block palette, with any {@code tables.<alias>.blocks.*} override applied. */
+    public TableBlocks tableBlocks(UnoTable.Type type) {
+        return tableBlocks.computeIfAbsent(type, t ->
+                new TableBlocks(t.topPrimary(), t.topSecondary(), t.frame(), t.seat()));
     }
 
     // --------------------------------------------------------------- gambling

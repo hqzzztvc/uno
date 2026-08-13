@@ -21,8 +21,8 @@ session that has been idle.
 ## What this is
 
 A Paper server plugin (`com.unoplugin`) that implements a fully playable multiplayer UNO game inside
-Minecraft: placeable casino tables with sittable stools and a fish dealer, a 3D card fan held in the
-player's hand, in-world draw/discard piles, and an item-wagering mode ("Let It Ride").
+Minecraft: four variants of a placeable table with stair seats, a card fan held in the player's
+hand, in-world draw/discard piles, and an item-wagering mode ("Let It Ride").
 
 Two halves that must stay in sync:
 
@@ -102,9 +102,9 @@ python3 generate_held_fan.py      # the ~6800-file uno:held composite fan (model
 - The Blockbench exports reference a texture called `sides` that was never saved, and the deck
   exports carry a leftover `wild_draw4` on their face. The generator resolves both: rims point at
   the generated `item/cards/sides.png`, and a deck shows `back.png` on top and bottom.
-- Run `generate_card_models.py` **before** `generate_held_fan.py` — the fan's 6800 files are
-  `parent` references to `assets/uno/models/item/cards_held/`, not copies of the geometry.
-  Inlining a 17-box card 6800 times is a pack the client chokes on baking.
+- `generate_card_models.py` and `generate_held_fan.py` are independent — the fan reads the card
+  PNGs directly and owes nothing to `uno_json/`. Order only mattered while the fan parented the
+  3D card; see the fan note below.
 
 - `generate_held_fan.py` **reads `MAX_SLOTS` and `DENSITIES` out of `HandManager.java`** (see
   `java_constants()`) — the Java file is the single source of truth and the two can no longer drift.
@@ -120,8 +120,14 @@ python3 generate_held_fan.py      # the ~6800-file uno:held composite fan (model
   business on a live server.
 - `generate_card_font.py` is **dead code** — an abandoned HUD-font approach. Its outputs
   (`assets/uno/font/`, `assets/uno/textures/font/`) are not in the pack and `HandFont.java` was deleted.
-- The fan strips the four rim faces from its copy of the card (`strip_rims`). They are 60 of the
-  card's 86 quads and sub-pixel at the 0.18 fan scale, and the fan bakes 6800+ models.
+- **The fan's card is a flat two-face quad, and that is deliberate.** The fan briefly parented the
+  3D Blockbench card (`uno:item/cards_held/`); 21 cards with real thickness sharing one pivot
+  intersect and show their cross-sections, and the only fix — a depth step wider than the card is
+  thick — threw the selected card far off the tuned spot. Two faces have no thickness to clear, so
+  the fan inlines its own quad and keeps `DEPTH_STEP = 0.04` / `SEL_FRONT = 0.5`. Re-pointing it at
+  `cards_held` means re-tuning both and checking the result in first person.
+- `assets/uno/models/item/cards_held/` is still generated but **nothing references it** now that the
+  fan inlines its quad. It is kept as the ready-made 3D card if the fan is ever taken back that way.
 - `cards_textures_backup/` at the repo root is a stale copy of the card art, not used by the build.
   It is **untracked and gitignored** — still on disk, no longer in the repo. Same for `.DS_Store`.
 
@@ -136,8 +142,8 @@ all generated from the one Blockbench export in `uno_json/`:
 | `uno:<card>` | upright, face on +Z, bottom-centre at the origin | `CardTester` debug fan (`debug: true` only) |
 | `uno:flat_<card>` / `uno:down_<card>` | lying flat, face-up / face-down | `PileRenderer` (discard pile) |
 | `uno:deck_10` / `deck_50` / `deck_100` | the draw pile as one solid block of cards | `PileRenderer` (draw pile) |
-| *(no item)* `uno:item/cards_held/<card>` | upright, pivot on (8,8,8), rims stripped | parent of every `uno:held` slot model |
-| `uno:held` | one composite item, 21 select-slots | `HandManager` (the held fan) |
+| *(no item)* `uno:item/cards_held/<card>` | upright, pivot on (8,8,8), rims stripped | nothing — see the fan note above |
+| `uno:held` | one composite item, 21 select-slots | `HandManager` (the held fan; inlines its own flat quad) |
 
 The held fan is a *single* PAPER item whose `custom_model_data` **strings** drive the composite: slot
 `k` gets `"<card>_<tier>"`, `"<card>_<tier>_sel"` for the highlighted card, or `""` for empty.
@@ -179,7 +185,7 @@ command/  UnoCommand (routing + permissions + tab completion), GambleCommand
 
 ### In-world entities
 
-All visuals are `ItemDisplay` / `BlockDisplay` / `TextDisplay` / `Interaction` entities spawned with
+All visuals are `ItemDisplay` / `BlockDisplay` / `TextDisplay` entities spawned with
 `setPersistent(false)` and tagged in their PDC with the plugin's `NamespacedKey`s. They vanish with
 the chunk; `TableManager` respawns them on `ChunkLoadEvent` and clears `entityIds` on unload. Only
 logical state is persisted:
@@ -197,8 +203,8 @@ logical state is persisted:
 The `cards_flat` / `deck_*` models come out of the generator *already lying flat and centred on
 (8, 8, 8)* precisely so `PileRenderer` can spawn them with **no rotation**; a render-time `rotateX`
 swings the card off its spawn point and drops it under the table. Don't "fix" the missing rotation —
-change the baked rotation in `generate_card_models.py` instead. The felt surface height lives once,
-in `UnoTable.SURFACE_Y`.
+change the baked rotation in `generate_card_models.py` instead. The table surface height lives once,
+in `UnoTable.SURFACE_Y` — `1.0`, because a table is exactly one block tall.
 
 The draw pile is **one** `ItemDisplay` showing `deck_10` / `deck_50` / `deck_100`, picked from the
 remaining count, not a stack of card entities. The deck order is settled once when `Deck` is
@@ -215,6 +221,77 @@ instead of blinking out and restarting. It does that **without spawning or remov
 display freed from the bottom is the one that becomes the new top card, so a play costs five
 teleports and one item swap. Don't "optimise" it back into a clear-and-rebuild: watching the pile
 vanish every five plays is the bug that shape was hiding.
+
+### Tables
+
+There are **four variants of one table**, not four table shapes: a 3×3 chequered top with a stair
+pulled up to the middle of each side, differing only in their block palette. That is why `UnoTable`
+is a single concrete class and the palette lives in `UnoTable.Type` — adding a fifth is one enum
+constant. `Type.byAlias` is what turns `/uno createtable cherry` into a variant.
+
+- **The table is REAL BLOCKS set into the world, not display entities.** `TableManager.buildBlocks`
+  lays nine logs (`Orientable` axis Y, so the rings face up) and four stairs. This is the whole
+  reason the chunk-index machinery is gone: a display is an extra entity every nearby player has to
+  track, it renders at whatever scale it was given rather than as a block, and it dies with its
+  chunk so the plugin has to babysit `ChunkLoadEvent`/`ChunkUnloadEvent` to put it back. Real blocks
+  save with the chunk, cost nothing to render, and light and occlude correctly. **Don't put the
+  table back on `BlockDisplay`.**
+- Because the top is one layer of whole blocks, a variant's sides are whatever bark the log has.
+  That is the whole difference between `cherry` and `darkcherry`: **stripped** cherry is pink on
+  every face, **unstripped** cherry keeps pink rings on top with dark bark down the sides. The dark
+  frame in the original mock-up was that bark, not a separate block — don't reach for blackstone or
+  crimson to reproduce it. `frame` survives in the palette only so `/uno remove` still recognises a
+  block an older config put down.
+- Variants are named after their wood, not a mood, so `/uno createtable <theme>` tells you what you
+  are going to get. `TableManager.LEGACY_TYPES` maps every name a previous build wrote
+  (`CASINO`, `BLOSSOM`, `MIDNIGHT`, `TAVERN`, `HOMESTEAD`) onto the current ones.
+- The top is **never rotated**. A 3×3 is symmetric under the 90° steps `snap()` allows, so a rotation
+  would be a no-op that only risks putting the tiles off the block grid. Only the seats care about
+  facing.
+- Stairs carry their full-height side on the face they *face*, so a seat faces **outward** — that
+  puts the tall half behind the sitter as a backrest with the low step toward the table.
+- Palettes are overridable per variant under `tables.<alias>.blocks.*`; a name that isn't a block is
+  logged and the enum default stands, because returning null there surfaces as an NPE inside the
+  chunk-load handler that rebuilds every table in range.
+- `tables.yml` rows written by the old build say `type: CASINO`. `TableManager.migrateType` rewrites
+  those to `BLOSSOM` on load. Rejecting them instead strands them in `pending` and leaves a dead
+  entry on disk that no command can reach.
+- `register()` re-lays a table's blocks **only if they are missing** (it checks the anchor block).
+  That one block read is what makes the entity→block migration and a bulldozed table both
+  self-healing, and it is why a normal restart rebuilds nothing.
+- **There is no placeable table item.** `/uno createtable <theme>` builds one `BUILD_DISTANCE` (4)
+  blocks in front of the caller, on whatever ground `groundInFront` finds within `GROUND_SEARCH`.
+  In front, not underfoot: a 3×3 with seats 2 out centred on the player buries them in their own
+  furniture. An item that turns into a table on right-click was a thing you could stack, drop into
+  a chest and lose.
+- `onBlockBreak` protects a live table's 13 positions from everyone without `uno.admin`, since the
+  blocks are now real and mineable. Admins are deliberately let through — which also means an admin
+  testing will mine their own table and see it come back on the next restart.
+
+### Seating
+
+**Seating is `/uno join`, not clicking a seat.** There are no `Interaction` entities on a table any
+more: `joinNearest` finds the nearest table within `tables.join-radius` and takes the free seat
+nearest the player — the one they would have clicked. Comparison is X/Z only, so standing on the
+table or in a hole beside it doesn't change which side of it you are on. Every refusal messages the
+player, because "nothing happened" is indistinguishable from a broken command.
+
+Sitting still works by mounting an invisible `ArmorStand`, so `/uno leave` ejects and lets
+`onDismount` route into `leaveSeat` — the bookkeeping and the message then happen in exactly one
+place whether the player typed the command or just pressed shift.
+
+### Leaving a hand
+
+Two commands, and the difference between them is the wagering rule:
+
+- **`/uno quit`** forfeits — you drop out, everyone else plays on. It routes through the same
+  `GameManager.forfeit` as disconnecting, deliberately: typing it has to cost exactly what pulling
+  the plug costs, or "I'm losing" becomes a reason to alt-F4. On a wagered hand your stake stays in
+  the pot either way.
+- **`/uno stop`** ends the hand for everyone at the table, and is **refused while a pot is live**
+  (`GameListener.hasPotAtTable`). Ending a hand refunds the pot, so a player who is behind could
+  otherwise use it as a free undo on a losing bet. With money up, players get `/uno quit` and admins
+  get `/uno end`.
 
 ### Input ownership
 

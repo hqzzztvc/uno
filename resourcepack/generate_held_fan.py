@@ -16,10 +16,13 @@ custom_model_data string per slot k:
 Fan tilt comes from each model's DISPLAY-TRANSFORM rotation (fine angles), so the cards
 radiate from one bottom pivot. No world entities -> no lag, no clipping.
 
-Every one of those thousands of models is nothing but a display transform on top of the
-same card, so each PARENTS the shared `uno:item/cards_held/<card>` that
-generate_card_models.py derives from the Blockbench source. Inlining the 3D card instead
-would repeat its geometry 6800 times in a pack the client bakes in full at load.
+The fan card is a FLAT two-face quad inlined here, deliberately, and not the 3D Blockbench
+card the piles use. The fan stacks 21 of them on a single pivot a few degrees apart, so a
+card with real thickness makes neighbours intersect and show their cross-sections; the only
+way to clear that is a depth step wider than the card is thick, which throws the selected
+card off the tuned position. Two faces have no thickness to clear, so the fan keeps the
+placement below. Don't re-point this at `uno:item/cards_held/` without re-tuning DEPTH_STEP
+and SEL_FRONT, and looking at the result in first person.
 """
 import json
 import os
@@ -28,7 +31,7 @@ import shutil
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.join(HERE, "..", "uno_json")
+CARD_DIR = os.path.join(HERE, "assets/minecraft/textures/item/cards")
 MODELS = os.path.join(HERE, "assets/uno/models/item/held")
 ITEM = os.path.join(HERE, "assets/uno/items/held.json")
 HAND_MANAGER = os.path.join(
@@ -65,25 +68,20 @@ MAX_SLOTS, DENSITIES = java_constants()
 S = (MAX_SLOTS - 1) // 2
 print(f"HandManager.java: MAX_SLOTS={MAX_SLOTS} DENSITIES={DENSITIES}")
 BASE_TILT_Z = -12.0          # lean the whole fan slightly right
+DEPTH_STEP = 0.04            # SMALL monotonic step -> subtle left-front overlap, no giant card
+SEL_FRONT = 0.5              # selected sits at this fixed front depth -> always on top, readable
 
-# Locked first-person placement (fanpos 4, slightly lowered). The card is 24 model units
-# tall where the old flat quad was 15, so both scales carry a 15/24 correction and the fan
-# keeps exactly the on-screen size it was tuned to.
+# Locked first-person placement (fanpos 4, slightly lowered).
 FP_TILT_X = 0
 FP_TRANS = [-2.0, 2.0, 0.5]
-FP_SCALE = 0.18125           # 0.29 * 15/24
+FP_SCALE = 0.29
 TP_TRANS = [0.0, 1.0, 1.5]
-TP_SCALE = 0.2625            # 0.42 * 15/24
+TP_SCALE = 0.42
 
-# The card now has real thickness, and every card in the fan pivots on the same bottom
-# point, so any depth step under one card thickness makes neighbours intersect and show
-# their cross-section. Display translations are not scaled by the transform's scale, so
-# a 1-unit-thick card needs a step of at least `scale` to clear the card behind it.
-DEPTH_STEP = round(max(FP_SCALE, TP_SCALE), 4)
-SEL_FRONT = round(DEPTH_STEP * ((MAX_SLOTS - 1) // 2 + 1), 4)  # clear of the whole fan
-
-EXCLUDE = {"back", "blank"}
-DECKS = ("deck_10", "deck_50", "deck_100")
+# Not cards, despite living in the card texture folder. `sides` is the rim texture
+# generate_card_models.py writes there for the 3D card families; globbing the folder without
+# it puts a "sides" card in every slot of every tier.
+EXCLUDE = {"back", "blank", "sides"}
 
 
 def slot_depth(k):
@@ -103,19 +101,35 @@ def display(theta, depth):
     }
 
 
+def card_textures(card):
+    return {
+        "front": f"minecraft:item/cards/{card}",
+        "back": "minecraft:item/cards/back",
+        "particle": f"minecraft:item/cards/{card}",
+    }
+
+
 def card_model(card, theta, depth):
-    return {"parent": f"uno:item/cards_held/{card}", "display": display(theta, depth)}
+    elem = {
+        "from": [3, 8, 7.5],
+        "to": [13, 23, 8.5],
+        "faces": {
+            "south": {"uv": [0, 0, 16, 16], "texture": "#front"},
+            "north": {"uv": [0, 0, 16, 16], "texture": "#back"},
+        },
+    }
+    return {"textures": card_textures(card), "elements": [elem], "display": display(theta, depth)}
 
 
 def main():
     cards = sorted(
         os.path.splitext(f)[0]
-        for f in os.listdir(SRC)
-        if f.endswith(".json") and os.path.splitext(f)[0] not in EXCLUDE | set(DECKS)
+        for f in os.listdir(CARD_DIR)
+        if f.endswith(".png") and os.path.splitext(f)[0] not in EXCLUDE
     )
     if not cards:
-        sys.exit(f"No card geometry in {SRC} — run generate_card_models.py first; the fan "
-                 f"parents the models it writes to assets/uno/models/item/cards_held/.")
+        sys.exit(f"No card art in {CARD_DIR} — the fan textures its quads straight from the "
+                 f"card PNGs under the minecraft namespace.")
 
     # Regenerate from scratch: a slot count or tier that shrank must not leave orphans.
     shutil.rmtree(MODELS, ignore_errors=True)

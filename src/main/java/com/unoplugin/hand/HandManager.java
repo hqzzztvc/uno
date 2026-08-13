@@ -64,6 +64,10 @@ public final class HandManager implements Listener {
     private static final NamespacedKey HELD_MODEL = new NamespacedKey("uno", "held");
     /** Left-click and interact events double-fire; ignore the echo. */
     private static final long INPUT_DEBOUNCE_MS = 150;
+    /** Ticks A/D must be held before the selection starts auto-repeating. */
+    private static final int REPEAT_DELAY_TICKS = 5;
+    /** Ticks between steps once auto-repeat has started. */
+    private static final int REPEAT_EVERY_TICKS = 2;
 
     /** Routes play/draw input into a game; returns true if a game handled it. */
     public interface CardActions {
@@ -98,6 +102,8 @@ public final class HandManager implements Listener {
         ItemStack displaced;
         boolean lastLeft;
         boolean lastRight;
+        int leftHeldTicks;
+        int rightHeldTicks;
         long lastPlayMs;
         long lastDrawMs;
 
@@ -190,32 +196,55 @@ public final class HandManager implements Listener {
         }
     }
 
-    /** Per-tick: read each hand-holder's A/D input and scroll the selection on key-down. */
+    /**
+     * Per-tick: read each hand-holder's A/D input and scroll the selection.
+     *
+     * <p>Tap = one card. HOLD = keep going: after {@link #REPEAT_DELAY_TICKS} the key starts
+     * auto-repeating every {@link #REPEAT_EVERY_TICKS}, so crossing a 15-card hand is one
+     * held key rather than fifteen taps. The delay is what keeps a deliberate single tap from
+     * ever becoming two.
+     */
     private void poll() {
         for (Hand hand : hands.values()) {
             if (!hand.player.isOnline() || hand.cards.isEmpty()) {
                 continue;
             }
             Input in = hand.player.getCurrentInput();
-            boolean left = in.isLeft();
-            boolean right = in.isRight();
-            boolean changed = false;
             // Fan order runs right-to-left vs index, so A (left) increments to move the
             // highlight visually left, D (right) decrements to move it right.
-            if (left && !hand.lastLeft) {
-                hand.selected = Math.min(hand.cards.size() - 1, hand.selected + 1);
-                changed = true;
+            int step = 0;
+            if (repeats(in.isLeft(), hand.lastLeft, hand.leftHeldTicks)) {
+                step += 1;
             }
-            if (right && !hand.lastRight) {
-                hand.selected = Math.max(0, hand.selected - 1);
-                changed = true;
+            if (repeats(in.isRight(), hand.lastRight, hand.rightHeldTicks)) {
+                step -= 1;
             }
-            hand.lastLeft = left;
-            hand.lastRight = right;
-            if (changed) {
+            hand.leftHeldTicks = in.isLeft() ? hand.leftHeldTicks + 1 : 0;
+            hand.rightHeldTicks = in.isRight() ? hand.rightHeldTicks + 1 : 0;
+            hand.lastLeft = in.isLeft();
+            hand.lastRight = in.isRight();
+
+            if (step == 0) {
+                continue;
+            }
+            int target = Math.max(0, Math.min(hand.cards.size() - 1, hand.selected + step));
+            if (target != hand.selected) {
+                hand.selected = target;
                 updateItem(hand, false);
             }
         }
+    }
+
+    /** True on the tick a key goes down, and again on each auto-repeat while it is held. */
+    private static boolean repeats(boolean down, boolean wasDown, int heldTicks) {
+        if (!down) {
+            return false;
+        }
+        if (!wasDown) {
+            return true; // key-down edge: always one step
+        }
+        int sinceDelay = heldTicks - REPEAT_DELAY_TICKS;
+        return sinceDelay >= 0 && sinceDelay % REPEAT_EVERY_TICKS == 0;
     }
 
     /** True if the player currently has an active hand fan. */

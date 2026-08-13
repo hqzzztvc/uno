@@ -36,9 +36,10 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
     private static final List<String> DEMO_HAND = List.of(
             "red_1", "yellow_5", "green_skip", "blue_9", "red_draw2", "wild", "green_3");
 
-    private static final List<String> PUBLIC_SUBS = List.of("help", "version", "start", "gamble");
+    private static final List<String> PUBLIC_SUBS = List.of(
+            "help", "version", "join", "leave", "start", "quit", "stop", "gamble");
     private static final List<String> ADMIN_SUBS = List.of(
-            "give", "remove", "list", "info", "tp", "end", "refund", "reload", "play");
+            "createtable", "remove", "list", "info", "tp", "end", "refund", "reload", "play");
     private static final List<String> DEBUG_SUBS = List.of(
             "fan", "fanclear", "testcards", "hand", "cleartest");
 
@@ -74,11 +75,15 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
             case "help" -> help(sender);
             case "version" -> messages.send(sender, "plugin.version",
                     "version", plugin.getPluginMeta().getVersion());
+            case "join", "sit" -> join(sender);
+            case "leave", "stand" -> leave(sender);
             case "start" -> start(sender, rest);
+            case "quit", "forfeit" -> quit(sender);
+            case "stop" -> stop(sender);
             case "gamble", "bet", "letitride" -> gamble(sender, rest);
 
             case "reload" -> reload(sender);
-            case "give" -> give(sender, rest);
+            case "createtable", "create" -> createTable(sender, rest);
             case "remove" -> remove(sender);
             case "list" -> list(sender);
             case "info" -> info(sender);
@@ -102,17 +107,37 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
 
     private void help(CommandSender sender) {
         messages.send(sender, "plugin.help-header");
+        messages.send(sender, "plugin.help-join");
+        messages.send(sender, "plugin.help-leave");
         messages.send(sender, "plugin.help-play");
+        messages.send(sender, "plugin.help-quit");
+        messages.send(sender, "plugin.help-stop");
         messages.send(sender, "plugin.help-gamble");
         messages.send(sender, "plugin.help-version");
         if (!sender.hasPermission("uno.admin")) {
             return;
         }
         messages.send(sender, "plugin.help-admin-header");
-        for (String key : new String[]{"plugin.help-give", "plugin.help-remove", "plugin.help-list",
+        for (String key : new String[]{"plugin.help-createtable", "plugin.help-remove", "plugin.help-list",
                 "plugin.help-info", "plugin.help-tp", "plugin.help-end", "plugin.help-refund",
                 "plugin.help-reload"}) {
             messages.send(sender, key);
+        }
+    }
+
+    /** Stand next to a table and take the free seat nearest you. */
+    private void join(CommandSender sender) {
+        Player player = asPlayer(sender);
+        if (player != null) {
+            tables.joinNearest(player);
+        }
+    }
+
+    /** Get up. Dismounting the seat by hand (shift) does the same thing. */
+    private void leave(CommandSender sender) {
+        Player player = asPlayer(sender);
+        if (player != null) {
+            tables.leaveNearest(player);
         }
     }
 
@@ -127,6 +152,34 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
             return;
         }
         games.startSeated(player, bots == null ? 0 : bots);
+    }
+
+    /**
+     * Drop out of the hand you're in; everyone else plays on.
+     *
+     * <p>Costs exactly what disconnecting costs — including leaving a wagered stake in the pot.
+     */
+    private void quit(CommandSender sender) {
+        Player player = asPlayer(sender);
+        if (player == null) {
+            return;
+        }
+        if (!games.forfeit(player)) {
+            messages.send(player, "game.not-in-game");
+        }
+    }
+
+    /** End the hand at your table for everyone. Refused while a pot is riding on it. */
+    private void stop(CommandSender sender) {
+        Player player = asPlayer(sender);
+        if (player == null) {
+            return;
+        }
+        switch (games.stopGameOf(player)) {
+            case OK -> messages.send(player, "game.stopped");
+            case NOT_IN_GAME -> messages.send(player, "game.not-in-game");
+            case WAGERED -> messages.send(player, "game.stop-wagered");
+        }
     }
 
     private void gamble(CommandSender sender, String[] args) {
@@ -147,7 +200,8 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         messages.send(sender, "plugin.reloaded");
     }
 
-    private void give(CommandSender sender, String[] args) {
+    /** Build a table on the ground in front of the caller. */
+    private void createTable(CommandSender sender, String[] args) {
         if (notAdmin(sender)) {
             return;
         }
@@ -155,13 +209,16 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         if (player == null) {
             return;
         }
-        UnoTable.Type type = args.length >= 1 ? parseType(args[0]) : UnoTable.Type.CASINO;
-        if (type == null) {
-            messages.send(player, "table.unknown-type");
+        if (args.length < 1) {
+            messages.send(player, "table.pick-variant", "variants", variantList());
             return;
         }
-        tables.giveTableItem(player, type);
-        messages.send(player, "table.given");
+        UnoTable.Type type = parseType(args[0]);
+        if (type == null) {
+            messages.send(player, "table.unknown-type", "variants", variantList());
+            return;
+        }
+        tables.createTableCommand(player, type);
     }
 
     /** Removing a table with a hand or a pot running on it would strand both. */
@@ -412,10 +469,24 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
     }
 
     private UnoTable.Type parseType(String raw) {
-        if (raw.equalsIgnoreCase("table") || raw.equalsIgnoreCase("casino")) {
-            return UnoTable.Type.CASINO;
+        return UnoTable.Type.byAlias(raw);
+    }
+
+    /** Every variant alias, for the "which one?" and "no such one" messages. */
+    private static String variantList() {
+        List<String> out = new ArrayList<>();
+        for (UnoTable.Type t : UnoTable.Type.values()) {
+            out.add(t.alias());
         }
-        return null;
+        return String.join(", ", out);
+    }
+
+    private static List<String> variantAliases() {
+        List<String> out = new ArrayList<>();
+        for (UnoTable.Type t : UnoTable.Type.values()) {
+            out.add(t.alias());
+        }
+        return out;
     }
 
     /** Online player first; otherwise anyone the server has already seen. */
@@ -456,8 +527,11 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         }
         if (args.length == 2) {
             switch (args[0].toLowerCase(Locale.ROOT)) {
-                case "give" -> {
-                    return prefixed(List.of("table"), args[1]);
+                case "createtable", "create" -> {
+                    if (!sender.hasPermission("uno.admin")) {
+                        return List.of();
+                    }
+                    return prefixed(variantAliases(), args[1]);
                 }
                 case "gamble", "bet", "letitride" -> {
                     return prefixed(BetManager.subcommands(), args[1]);

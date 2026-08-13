@@ -43,18 +43,68 @@ game:
   turn-warning-seconds: 10
 
 # ---- Tables ----
+#
+#  Four variants of the same table: a 3x3 chequered top of logs with a stair pulled up to
+#  each side. They are REAL BLOCKS, set into the world -- not display entities -- so they
+#  save with the chunk and cost nothing to render. Build one with /uno createtable <theme>
+#  and it appears on the ground in front of you; players sit with /uno join.
+#
+#  Every table has four stairs, so max-players cannot go above 4.
+#
+#  blocks.* retextures a variant without touching the plugin. Any block name works:
+#    top-primary    the corners and centre of the top
+#    top-secondary  the four edge tiles
+#    frame          unused by the single-layer top; kept so /uno remove still recognises a
+#                   block an older config put there
+#    seat           the stair players sit on (a stairs block, so it gets a backrest)
+#  Leave a key out to keep the built-in default shown below. A name that isn't a block is
+#  logged and ignored.
 tables:
   # Most tables allowed in a single world. 0 = unlimited.
   max-per-world: 0
 
-  casino:
-    min-players: 4
-    max-players: 6
+  # How close (in blocks) you must stand to a table for /uno join to seat you.
+  join-radius: 4.0
 
-# ---- Fish Dealer ----
-dealer:
-  # Spawn the dealer at the head of each casino table.
-  enabled: true
+  # All pink — stripped cherry keeps its colour on the sides as well as the rings.
+  cherry:
+    min-players: 2
+    max-players: 4
+    blocks:
+      top-primary: STRIPPED_CHERRY_LOG
+      top-secondary: STRIPPED_PALE_OAK_LOG
+      frame: STRIPPED_CHERRY_LOG
+      seat: CHERRY_STAIRS
+
+  # Pink rings, dark sides — unstripped cherry bark is what makes the dark frame.
+  darkcherry:
+    min-players: 2
+    max-players: 4
+    blocks:
+      top-primary: CHERRY_LOG
+      top-secondary: PALE_OAK_LOG
+      frame: CHERRY_LOG
+      seat: PALE_OAK_STAIRS
+
+  # Oak chequer, dark oak seats.
+  oak:
+    min-players: 2
+    max-players: 4
+    blocks:
+      top-primary: OAK_LOG
+      top-secondary: STRIPPED_OAK_LOG
+      frame: OAK_LOG
+      seat: DARK_OAK_STAIRS
+
+  # Pale stripped oak against birch, oak seats.
+  birch:
+    min-players: 2
+    max-players: 4
+    blocks:
+      top-primary: STRIPPED_OAK_LOG
+      top-secondary: BIRCH_LOG
+      frame: STRIPPED_OAK_LOG
+      seat: OAK_STAIRS
 
 # ---- Gambling ("Let It Ride") ----
 #

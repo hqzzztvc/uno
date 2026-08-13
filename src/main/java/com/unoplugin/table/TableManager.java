@@ -12,21 +12,24 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
+import org.bukkit.Axis;
 import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.block.data.Directional;
+import org.bukkit.block.data.Orientable;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.BlockDisplay;
-import org.bukkit.entity.ItemDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
-import org.bukkit.entity.Interaction;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
+import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.EntityDismountEvent;
-import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.world.ChunkLoadEvent;
@@ -49,6 +52,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -60,7 +64,7 @@ import java.util.UUID;
 public class TableManager implements Listener {
 
     /** Outcome of trying to place a table. */
-    public enum PlaceResult { OK, TOO_CLOSE, WORLD_LIMIT }
+    public enum PlaceResult { OK, TOO_CLOSE, WORLD_LIMIT, NO_ROOM }
 
     /** Lets the game/bet layers veto removing a table they're using. */
     public interface BusyCheck {
@@ -76,12 +80,7 @@ public class TableManager implements Listener {
      * they are written back verbatim on save and materialised if their world turns up.
      */
     private final List<PendingTable> pending = new ArrayList<>();
-    /** Chunk key -> tables in it, so chunk load/unload isn't a scan of every table. */
-    private final Map<Long, List<UnoTable>> byChunk = new HashMap<>();
-
-    private final NamespacedKey itemKey;    // marks the placeable item with its type
     private final NamespacedKey idKey;       // tags spawned entities with their table id
-    private final NamespacedKey seatKey;     // tags a seat interaction with its seat index
     private final NamespacedKey vehicleKey;  // tags the invisible seat mount
     private final File dataFile;
 
@@ -92,20 +91,15 @@ public class TableManager implements Listener {
                                 double x, double y, double z, double yaw) {}
 
     /**
-     * Stool-cushion block. TODO(26.3): swap to {@code Material.CUSHION} — the new
-     * sittable cushion (crafted from 3 wool slabs) that ships in the 26.3 drop; it
-     * didn't exist in the API this was built against, so wool stands in for the look.
+     * How far in front of the player {@code /uno createtable} builds, in blocks.
+     *
+     * <p>The table is 3×3 with seats 2 out, so it reaches 2 blocks from its centre. At 4 the
+     * near seat lands just past arm's reach — clear of the player, close enough to walk to.
      */
-    private static final Material SEAT_CUSHION = Material.RED_WOOL;
+    private static final double BUILD_DISTANCE = 4.0;
 
-    /** Half-width of a table's visuals in blocks: the dealer stands furthest out, at 2.4. */
-    private static final double FOOTPRINT = 2.4;
-
-    /** Multiplier on the dealer's 1×2-block model. 1.0 → he stands 2 blocks tall. */
-    private static final float DEALER_SCALE = 1.0f;
-
-    /** Transparent gap under his tail: 3px of a 128px-tall sprite spanning 2 blocks. */
-    private static final double DEALER_FOOT_GAP = 0.047;
+    /** How far up or down to look for ground under the build spot before giving up. */
+    private static final int GROUND_SEARCH = 4;
 
     /** Players currently seated, keyed by player id. */
     private final Map<UUID, Seated> seated = new HashMap<>();
@@ -116,9 +110,7 @@ public class TableManager implements Listener {
         this.plugin = plugin;
         this.messages = messages;
         this.settings = settings;
-        this.itemKey = new NamespacedKey(plugin, "uno_table_item");
         this.idKey = new NamespacedKey(plugin, "uno_table_id");
-        this.seatKey = new NamespacedKey(plugin, "uno_seat_index");
         this.vehicleKey = new NamespacedKey(plugin, "uno_seat_vehicle");
         this.dataFile = new File(plugin.getDataFolder(), "tables.yml");
     }
@@ -145,7 +137,7 @@ public class TableManager implements Listener {
                 continue;
             }
             String worldName = s.getString("world", "");
-            String type = s.getString("type", "CASINO");
+            String type = migrateType(s.getString("type", UnoTable.Type.CHERRY.name()));
             double x = s.getDouble("x");
             double y = s.getDouble("y");
             double z = s.getDouble("z");
@@ -168,8 +160,39 @@ public class TableManager implements Listener {
             }
         }
         plugin.getLogger().info("Loaded " + tables.size() + " UNO table(s)."
+                + (rebuilt == 0 ? "" : " Re-laid the blocks of " + rebuilt + " of them.")
                 + (pending.isEmpty() ? "" : " " + pending.size()
                 + " waiting for their world to load (kept on file)."));
+    }
+
+    /**
+     * Table type names that existed in earlier builds, mapped to what they are called now.
+     *
+     * <p>Purely so a {@code tables.yml} written by an older jar still loads: the row keeps its
+     * position and just picks up the current palette. Rejecting an unknown name instead strands
+     * the row in {@code pending} and leaves a dead entry on disk that no command can reach.
+     */
+    private static final Map<String, UnoTable.Type> LEGACY_TYPES = Map.of(
+            "CASINO", UnoTable.Type.CHERRY,      // the single pre-variant table
+            "BLOSSOM", UnoTable.Type.CHERRY,     // renamed after the blocks it is made of
+            "MIDNIGHT", UnoTable.Type.DARK_CHERRY,
+            "TAVERN", UnoTable.Type.OAK,
+            "HOMESTEAD", UnoTable.Type.BIRCH);
+    /** Set once per load so the migration logs a single line, not one per table. */
+    private boolean loggedMigration = false;
+
+    private String migrateType(String stored) {
+        UnoTable.Type replacement = stored == null
+                ? null : LEGACY_TYPES.get(stored.toUpperCase(Locale.ROOT));
+        if (replacement == null) {
+            return stored;
+        }
+        if (!loggedMigration) {
+            plugin.getLogger().info("tables.yml holds tables under their old names — "
+                    + "loading them under the current ones. Their blocks are re-laid to match.");
+            loggedMigration = true;
+        }
+        return replacement.name();
     }
 
     /** A world showed up late — build any tables that were waiting for it. */
@@ -200,17 +223,32 @@ public class TableManager implements Listener {
         }
     }
 
-    /** Add to the registry, index it by chunk, and build it if all its chunks are loaded. */
+    /**
+     * Add a table read from disk back to the registry, building its blocks if they're gone.
+     *
+     * <p>Normally there is nothing to do: the blocks are real, so they were saved with their
+     * chunk and are already standing there. The check is for the two cases where they aren't
+     * — a table written by the old display-entity build (whose "visuals" were entities that
+     * died with the process), and a table someone bulldozed while the server was down.
+     * Re-laying only what's missing makes both self-healing and costs one block read.
+     */
     private void register(UnoTable table) {
         tables.put(table.id(), table);
-        indexChunk(table);
-        // Every chunk, not just the anchor's: spawning into one that is still out would put
-        // the dealer somewhere that unloads him again. onChunkLoad picks the table up when
-        // the last of its chunks arrives.
-        if (fullyLoaded(table)) {
-            spawnVisuals(table);
+        table.setSpawned(true);
+        World w = table.anchor().getWorld();
+        if (w == null) {
+            return;
+        }
+        Settings.TableBlocks palette = settings.tableBlocks(table.type());
+        Material standing = w.getBlockAt(table.anchor()).getType();
+        if (standing != palette.topPrimary() && standing != palette.topSecondary()) {
+            buildBlocks(table);
+            rebuilt++;
         }
     }
+
+    /** Tables whose blocks had to be re-laid this load — logged once, not once per table. */
+    private int rebuilt = 0;
 
     public void save() {
         YamlConfiguration yml = new YamlConfiguration();
@@ -266,42 +304,87 @@ public class TableManager implements Listener {
                 t.clearOccupant(s.index());
             }
         }
-        for (UnoTable t : tables.values()) {
-            despawnVisuals(t);
-        }
+        // The blocks stay: they are part of the world now, and a table that survives a
+        // restart is the whole point of building it out of blocks.
     }
 
     private UnoTable create(UnoTable.Type type, UUID id, Location anchor, float yaw) {
-        return switch (type) {
-            case CASINO -> new CasinoTable(id, anchor, yaw,
-                    settings.casinoMinPlayers(), settings.casinoMaxPlayers());
-        };
+        return new UnoTable(id, type, anchor, yaw,
+                settings.tableMinPlayers(type), settings.tableMaxPlayers(type));
     }
 
     // ------------------------------------------------------------ place / remove
 
-    /** Place a table on top of the clicked block, oriented to the placer's facing. */
-    public PlaceResult placeTable(UnoTable.Type type, Block clicked, Player placer) {
-        Location anchor = clicked.getLocation().add(0.5, 1.0, 0.5);
+    /**
+     * Build a table on the ground in FRONT of the player — the whole of {@code /uno createtable}.
+     *
+     * <p>In front, not underfoot: the table is 3×3 with seats 2 out, so centring it on the
+     * player buries them inside their own furniture and leaves them standing on the felt.
+     * {@link #BUILD_DISTANCE} puts the near seat about where they are looking.
+     */
+    public PlaceResult createTable(UnoTable.Type type, Player player) {
+        World w = player.getWorld();
         int limit = settings.maxTablesPerWorld();
-        if (limit > 0 && countIn(anchor.getWorld()) >= limit) {
+        if (limit > 0 && countIn(w) >= limit) {
             return PlaceResult.WORLD_LIMIT;
+        }
+        Location anchor = groundInFront(player);
+        if (anchor == null) {
+            return PlaceResult.NO_ROOM;
         }
         for (UnoTable other : tables.values()) {
             // World first: a table whose world was unloaded at runtime has a null one, and
             // calling equals ON that is an NPE that takes the whole placement down.
-            if (anchor.getWorld().equals(other.anchor().getWorld())
-                    && other.anchor().distanceSquared(anchor) < 16) {
-                return PlaceResult.TOO_CLOSE; // too close to an existing table
+            if (w.equals(other.anchor().getWorld())
+                    && other.anchor().distanceSquared(anchor) < 36) {
+                return PlaceResult.TOO_CLOSE;
             }
         }
-        float yaw = snap(placer.getLocation().getYaw());
+        float yaw = snap(player.getLocation().getYaw());
         UnoTable table = create(type, UUID.randomUUID(), anchor, yaw);
+        if (!footprintClear(table)) {
+            return PlaceResult.NO_ROOM;
+        }
         tables.put(table.id(), table);
-        indexChunk(table);
-        spawnVisuals(table);
+        buildBlocks(table);
         save();
         return PlaceResult.OK;
+    }
+
+    /**
+     * The block the table's centre sits on: {@link #BUILD_DISTANCE} ahead of the player,
+     * dropped onto whatever ground is there.
+     *
+     * <p>Returns null if there is nothing to stand the table on within a few blocks up or
+     * down — over a ravine or in mid-air, refusing beats dropping a table into the void.
+     */
+    private Location groundInFront(Player player) {
+        Location eye = player.getLocation();
+        double rad = Math.toRadians(snap(eye.getYaw()));
+        // Snapped yaw, so the table lands square with the world grid the player is facing.
+        double fx = -Math.sin(rad);
+        double fz = Math.cos(rad);
+        int bx = eye.getBlockX() + (int) Math.round(fx * BUILD_DISTANCE);
+        int bz = eye.getBlockZ() + (int) Math.round(fz * BUILD_DISTANCE);
+        World w = player.getWorld();
+        int startY = eye.getBlockY();
+        for (int dy = 0; dy <= GROUND_SEARCH; dy++) {
+            for (int sign : new int[]{1, -1}) {
+                int y = startY + sign * dy;
+                if (y < w.getMinHeight() + 1 || y > w.getMaxHeight() - 2) {
+                    continue;
+                }
+                Block floor = w.getBlockAt(bx, y - 1, bz);
+                Block at = w.getBlockAt(bx, y, bz);
+                if (floor.getType().isSolid() && (at.getType().isAir() || at.isReplaceable())) {
+                    return new Location(w, bx + 0.5, y, bz + 0.5);
+                }
+                if (dy == 0) {
+                    break; // +0 and -0 are the same block
+                }
+            }
+        }
+        return null;
     }
 
     /** How many tables are already in this world (for the per-world cap). */
@@ -352,8 +435,7 @@ public class TableManager implements Listener {
                 }
             }
         }
-        despawnVisuals(table);
-        unindexChunk(table);
+        clearBlocks(table);
         tables.remove(table.id());
         save();
     }
@@ -363,229 +445,108 @@ public class TableManager implements Listener {
         return (snapped % 360f + 360f) % 360f;
     }
 
-    // ------------------------------------------------------------- chunk index
-
-    private static long chunkKey(int chunkX, int chunkZ) {
-        return ((long) chunkX << 32) | (chunkZ & 0xffffffffL);
-    }
-
-    private static long chunkKey(Location loc) {
-        return chunkKey(loc.getBlockX() >> 4, loc.getBlockZ() >> 4);
-    }
+    // ------------------------------------------------------------------ blocks
 
     /**
-     * Every chunk this table's visuals reach into, not just the one holding its anchor.
+     * Build the table out of REAL blocks — nine logs and four stairs, set into the world.
      *
-     * <p>A table is wider than its anchor block: the dealer stands 2.4 blocks out, the stools
-     * 2.0, and the felt is 3×3. Anchor one near a chunk border and its entities straddle two
-     * or four chunks. Indexing only the anchor chunk meant a neighbouring chunk could unload
-     * and silently take the dealer with it (he never came back, because the table still
-     * counted as spawned), or the anchor chunk could cycle and spawn a <em>second</em> dealer
-     * on top of the first, who was alive and untracked in a chunk that never unloaded.
+     * <p>Not display entities. A display is one more entity per table for every player in
+     * range to track, it renders at whatever scale it was given rather than as a block, and
+     * it vanishes with its chunk so the plugin has to babysit chunk load/unload to put it
+     * back. Real blocks are saved with the chunk, cost nothing to render, light and occlude
+     * like the blocks they are, and behave the same whether the plugin is loaded or not.
      */
-    private static Set<Long> occupiedChunks(UnoTable table) {
+    private void buildBlocks(UnoTable table) {
+        World w = table.anchor().getWorld();
+        if (w == null) {
+            return;
+        }
+        Settings.TableBlocks palette = settings.tableBlocks(table.type());
         Location a = table.anchor();
-        // Chunks the visuals REALLY reach, from the true extent rather than a rounded-up block
-        // count. Claiming a chunk the table doesn't touch means that chunk unloading tears the
-        // table down — and takes anyone sitting at it out of their seat — for no reason.
-        int minX = (int) Math.floor(a.getX() - FOOTPRINT) >> 4;
-        int maxX = (int) Math.floor(a.getX() + FOOTPRINT) >> 4;
-        int minZ = (int) Math.floor(a.getZ() - FOOTPRINT) >> 4;
-        int maxZ = (int) Math.floor(a.getZ() + FOOTPRINT) >> 4;
-        Set<Long> keys = new HashSet<>(4);
-        for (int cx = minX; cx <= maxX; cx++) {
-            for (int cz = minZ; cz <= maxZ; cz++) {
-                keys.add(chunkKey(cx, cz));
-            }
-        }
-        return keys;
-    }
-
-    private void indexChunk(UnoTable table) {
-        for (long key : occupiedChunks(table)) {
-            byChunk.computeIfAbsent(key, k -> new ArrayList<>()).add(table);
-        }
-    }
-
-    private void unindexChunk(UnoTable table) {
-        for (long key : occupiedChunks(table)) {
-            List<UnoTable> here = byChunk.get(key);
-            if (here != null) {
-                here.remove(table);
-                if (here.isEmpty()) {
-                    byChunk.remove(key);
+        // The 3×3 top: one layer of logs laid ring-face up, chequered. World-axis aligned and
+        // never rotated — a 3×3 is symmetric under the 90° steps snap() allows.
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                // Corners and centre take the primary colour, the four edges the secondary.
+                Material log = ((Math.abs(dx) + Math.abs(dz)) % 2 == 0)
+                        ? palette.topPrimary() : palette.topSecondary();
+                BlockData data = log.createBlockData();
+                if (data instanceof Orientable orientable) {
+                    orientable.setAxis(Axis.Y); // rings up, bark on the sides
+                    data = orientable;
                 }
+                w.getBlockAt(a.clone().add(dx, 0, dz)).setBlockData(data, false);
             }
         }
-    }
-
-    /** True once every chunk the table reaches into is loaded — see {@link #occupiedChunks}. */
-    private boolean fullyLoaded(UnoTable table) {
-        World w = table.anchor().getWorld();
-        if (w == null) {
-            return false;
-        }
-        for (long key : occupiedChunks(table)) {
-            if (!w.isChunkLoaded((int) (key >> 32), (int) key)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    // ----------------------------------------------------------------- visuals
-
-    private void spawnVisuals(UnoTable table) {
-        if (table.isSpawned()) {
-            return;
-        }
-        World w = table.anchor().getWorld();
-        if (w == null) {
-            return;
-        }
-        sweepOrphans(table, w);
-        Location a = table.anchor();
-        // Textured felt top (top surface ~0.75), held up by 4 legs.
-        spawnTexturedSlab(table, w, a, "casino_table", 0.61);
-        for (float lx : new float[]{-1.35f, 1.15f}) {
-            for (float lz : new float[]{-1.35f, 1.15f}) {
-                spawnBlock(table, w, a, Material.SPRUCE_LOG,
-                        new Vector3f(0.2f, 0.53f, 0.2f), new Vector3f(lx, 0f, lz));
-            }
-        }
-        for (int i = 0; i < table.seats().size(); i++) {
-            Location seat = table.seats().get(i);
-            // A stool: a cushion at sitting height plus a centre leg to the floor.
-            spawnSeatCushion(table, w, seat);
-            spawnBlock(table, w, seat, Material.SPRUCE_LOG,
-                    new Vector3f(0.26f, 0.42f, 0.26f), new Vector3f(-0.13f, 0f, -0.13f));
-            spawnSeatInteraction(table, w, seat, i);
-        }
-        if (settings.dealerEnabled()) {
-            spawnDealer(table, w);
+        for (Location seat : table.seats()) {
+            w.getBlockAt(seat).setBlockData(seatData(table, seat, palette.seat()), false);
         }
         table.setSpawned(true);
     }
 
     /**
-     * The Fish Dealer at the head of the table, facing the players.
+     * The stair a player sits on, facing away from the table.
      *
-     * <p>His model is a flat 1×2-block panel carrying the sprite on both faces. An
-     * ItemDisplay anchors the model's (8,8,8) point, so the panel's bottom edge lands
-     * half a scaled block below the entity; the lift cancels that out, less the
-     * transparent gap under his tail.
+     * <p>Stairs carry their full-height side on the face they FACE, so facing outward puts
+     * the tall half behind the sitter like a backrest and leaves the low step toward the
+     * table.
      */
-    private void spawnDealer(UnoTable table, World w) {
-        if (!(table instanceof CasinoTable casino)) {
-            return;
+    private BlockData seatData(UnoTable table, Location seat, Material material) {
+        BlockData data = material.createBlockData();
+        if (data instanceof Directional directional) {
+            BlockFace outward = outwardFace(table.anchor(), seat);
+            if (directional.getFaces().contains(outward)) {
+                directional.setFacing(outward);
+                data = directional;
+            }
         }
-        Location loc = casino.dealerSpot().add(0, (0.5 - DEALER_FOOT_GAP) * DEALER_SCALE, 0);
-        ItemDisplay d = w.spawn(loc, ItemDisplay.class, id -> {
-            ItemStack item = new ItemStack(Material.PAPER);
-            ItemMeta meta = item.getItemMeta();
-            meta.setItemModel(new NamespacedKey("uno", "dealer"));
-            item.setItemMeta(meta);
-            id.setItemStack(item);
-            id.setBillboard(Display.Billboard.FIXED);
-            id.setBrightness(new Display.Brightness(15, 15));
-            id.setTransformation(new Transformation(
-                    new Vector3f(0f, 0f, 0f), new Quaternionf(),
-                    new Vector3f(DEALER_SCALE, DEALER_SCALE, DEALER_SCALE), new Quaternionf()));
-            id.setPersistent(false);
-            id.getPersistentDataContainer().set(idKey, PersistentDataType.STRING, table.id().toString());
-        });
-        table.entityIds().add(d.getUniqueId());
+        return data;
+    }
+
+    /** Which way is "away from the table" for this seat, snapped to a cardinal face. */
+    private static BlockFace outwardFace(Location anchor, Location seat) {
+        double dx = seat.getX() - anchor.getX();
+        double dz = seat.getZ() - anchor.getZ();
+        if (Math.abs(dx) >= Math.abs(dz)) {
+            return dx >= 0 ? BlockFace.EAST : BlockFace.WEST;
+        }
+        return dz >= 0 ? BlockFace.SOUTH : BlockFace.NORTH;
+    }
+
+    /** Every block position this table owns: the 3×3 top and the four seats. */
+    private static List<Location> footprint(UnoTable table) {
+        List<Location> out = new ArrayList<>(13);
+        Location a = table.anchor();
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                out.add(a.clone().add(dx, 0, dz));
+            }
+        }
+        out.addAll(table.seats());
+        return out;
     }
 
     /**
-     * The soft pad on top of a stool. A wool placeholder for now; TODO(26.3):
-     * swap {@link #SEAT_CUSHION} to {@code Material.CUSHION} — the sittable cushion
-     * (crafted from 3 wool slabs) that ships in the 26.3 drop — once it is stable.
-     */
-    private void spawnSeatCushion(UnoTable table, World w, Location seat) {
-        spawnBlock(table, w, seat, SEAT_CUSHION,
-                new Vector3f(0.8f, 0.16f, 0.8f), new Vector3f(-0.4f, 0.38f, -0.4f));
-    }
-
-    private void spawnSeatInteraction(UnoTable table, World w, Location seat, int index) {
-        Interaction inter = w.spawn(seat, Interaction.class, in -> {
-            in.setInteractionWidth(0.95f);
-            in.setInteractionHeight(1.0f);
-            in.setResponsive(true);
-            in.setPersistent(false);
-            in.getPersistentDataContainer().set(idKey, PersistentDataType.STRING, table.id().toString());
-            in.getPersistentDataContainer().set(seatKey, PersistentDataType.INTEGER, index);
-        });
-        table.entityIds().add(inter.getUniqueId());
-    }
-
-    /** The textured 3×3 casino felt surface, drawn as a scaled item-display. */
-    private void spawnTexturedSlab(UnoTable table, World w, Location anchor, String model, double yOffset) {
-        Location loc = anchor.clone().add(0, yOffset, 0); // model centre of the ~0.28-thick slab
-        loc.setYaw(table.yaw());
-        ItemDisplay d = w.spawn(loc, ItemDisplay.class, id -> {
-            ItemStack item = new ItemStack(Material.PAPER);
-            ItemMeta meta = item.getItemMeta();
-            meta.setItemModel(new NamespacedKey("uno", model));
-            item.setItemMeta(meta);
-            id.setItemStack(item);
-            id.setBillboard(Display.Billboard.FIXED);
-            id.setBrightness(new Display.Brightness(15, 15));
-            id.setTransformation(new Transformation(
-                    new Vector3f(0f, 0f, 0f), new Quaternionf(),
-                    new Vector3f(3f, 3f, 3f), new Quaternionf())); // 1-block model → 3×3 blocks
-            id.setPersistent(false);
-            id.getPersistentDataContainer().set(idKey, PersistentDataType.STRING, table.id().toString());
-        });
-        table.entityIds().add(d.getUniqueId());
-    }
-
-    private void spawnBlock(UnoTable table, World w, Location loc, Material mat,
-                            Vector3f scale, Vector3f translation) {
-        BlockDisplay d = w.spawn(loc, BlockDisplay.class, bd -> {
-            bd.setBlock(mat.createBlockData());
-            bd.setTransformation(new Transformation(translation, new Quaternionf(), scale, new Quaternionf()));
-            bd.setPersistent(false);
-            bd.setBrightness(new Display.Brightness(15, 15));
-            bd.getPersistentDataContainer().set(idKey, PersistentDataType.STRING, table.id().toString());
-        });
-        table.entityIds().add(d.getUniqueId());
-    }
-
-    /**
-     * Remove anything already standing here wearing this table's id.
+     * Take the table's blocks back out of the world.
      *
-     * <p>{@code entityIds} only knows about visuals this run spawned, so it cannot clean up
-     * after a crash, a chunk that unloaded half a table, or a world that already has
-     * duplicates in it. The id in each entity's PDC is the durable record, so trust that
-     * instead: whatever is left over gets cleared before new visuals go down. Cheap, because
-     * it only runs when a table is actually being (re)built.
+     * <p>Only clears a position that still holds the material the table put there, so a
+     * player who built something on the spot after breaking a seat doesn't lose it, and a
+     * table removed twice can't punch a hole in whatever arrived in between.
      */
-    private void sweepOrphans(UnoTable table, World w) {
-        String id = table.id().toString();
-        double r = FOOTPRINT + 1.0;
-        for (Entity e : w.getNearbyEntities(table.anchor(), r, r, r)) {
-            if (!id.equals(e.getPersistentDataContainer().get(idKey, PersistentDataType.STRING))) {
-                continue;
+    private void clearBlocks(UnoTable table) {
+        World w = table.anchor().getWorld();
+        if (w != null) {
+            Settings.TableBlocks palette = settings.tableBlocks(table.type());
+            Set<Material> ours = Set.of(palette.topPrimary(), palette.topSecondary(),
+                    palette.frame(), palette.seat());
+            for (Location loc : footprint(table)) {
+                Block b = w.getBlockAt(loc);
+                if (ours.contains(b.getType())) {
+                    b.setType(Material.AIR, false);
+                }
             }
-            // Seat mounts carry the table id too, but they belong to the seating lifecycle,
-            // not this one. Pulling a stool out from under someone who is sitting on it is
-            // never the right way to rebuild the furniture.
-            if (e.getPersistentDataContainer().has(vehicleKey, PersistentDataType.BYTE)
-                    && !e.getPassengers().isEmpty()) {
-                continue;
-            }
-            e.eject();
-            e.remove();
         }
-    }
-
-    private void despawnVisuals(UnoTable table) {
-        // Iterate a COPY: ejecting a seat mount fires EntityDismountEvent synchronously, which
-        // runs leaveSeat, which removes that mount's id from this very list. Iterating it live
-        // throws ConcurrentModificationException part-way through, so the clear() and
-        // setSpawned(false) below never run — the table is then stuck "spawned" forever with
-        // untracked displays standing in the world, which is the duplicate-dealer bug again.
+        // The seat mounts are still entities; they are all this table owns now.
         for (UUID eid : new ArrayList<>(table.entityIds())) {
             Entity e = Bukkit.getEntity(eid);
             if (e != null) {
@@ -597,96 +558,79 @@ public class TableManager implements Listener {
         table.setSpawned(false);
     }
 
-    // ------------------------------------------------------------------- items
-
-    public ItemStack createTableItem(UnoTable.Type type) {
-        ItemStack item = new ItemStack(Material.GREEN_CONCRETE);
-        ItemMeta meta = item.getItemMeta();
-        meta.displayName(Component.text("Casino Table", NamedTextColor.GOLD)
-                .decoration(TextDecoration.ITALIC, false));
-        meta.lore(List.of(
-                Component.text("Right-click the ground to place.", NamedTextColor.GRAY)
-                        .decoration(TextDecoration.ITALIC, false),
-                Component.text(settings.casinoMinPlayers() + "-" + settings.casinoMaxPlayers()
-                                + " players · has the Fish Dealer",
-                        NamedTextColor.DARK_GRAY).decoration(TextDecoration.ITALIC, false)));
-        meta.getPersistentDataContainer().set(itemKey, PersistentDataType.STRING, type.name());
-        meta.addItemFlags(ItemFlag.values());
-        item.setItemMeta(meta);
-        return item;
-    }
-
-    public void giveTableItem(Player player, UnoTable.Type type) {
-        player.getInventory().addItem(createTableItem(type));
+    /** True if every block the table needs is free to build into. */
+    private boolean footprintClear(UnoTable table) {
+        World w = table.anchor().getWorld();
+        if (w == null) {
+            return false;
+        }
+        for (Location loc : footprint(table)) {
+            Material m = w.getBlockAt(loc).getType();
+            // Grass, snow layers and the like are fine to build through — they're what the
+            // ground is dressed in. Anything solid is somebody's build.
+            if (!m.isAir() && !w.getBlockAt(loc).isReplaceable()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // ------------------------------------------------------------------ events
 
-    @EventHandler
-    public void onInteract(PlayerInteractEvent event) {
-        if (event.getAction() != Action.RIGHT_CLICK_BLOCK || event.getHand() != EquipmentSlot.HAND) {
-            return;
-        }
-        ItemStack item = event.getItem();
-        if (item == null || !item.hasItemMeta()) {
-            return;
-        }
-        String typeName = item.getItemMeta().getPersistentDataContainer()
-                .get(itemKey, PersistentDataType.STRING);
-        if (typeName == null) {
-            return;
-        }
-
-        event.setCancelled(true);
-        Block clicked = event.getClickedBlock();
-        if (clicked == null) {
-            return;
-        }
-        Player player = event.getPlayer();
-        UnoTable.Type type = UnoTable.Type.valueOf(typeName);
-
-        switch (placeTable(type, clicked, player)) {
-            case OK -> {
-                if (player.getGameMode() != GameMode.CREATIVE) {
-                    item.setAmount(item.getAmount() - 1);
-                }
-                messages.send(player, "table.placed");
-            }
+    /**
+     * {@code /uno createtable <theme>}: build one in front of the player and report why not.
+     *
+     * <p>There is no placeable item any more. Handing out a block that turns into a table on
+     * right-click meant the table was a thing you could stack, drop, put in a chest and lose;
+     * a command that builds it where you are standing has none of that to go wrong.
+     */
+    public void createTableCommand(Player player, UnoTable.Type type) {
+        switch (createTable(type, player)) {
+            case OK -> messages.send(player, "table.placed", "variant", type.displayName());
             case TOO_CLOSE -> messages.send(player, "table.too-close");
+            case NO_ROOM -> messages.send(player, "table.no-room");
             case WORLD_LIMIT -> messages.send(player, "table.world-limit",
                     "limit", settings.maxTablesPerWorld());
         }
     }
 
-    @EventHandler
-    public void onChunkLoad(ChunkLoadEvent event) {
-        List<UnoTable> here = byChunk.get(chunkKey(event.getChunk().getX(), event.getChunk().getZ()));
-        if (here == null) {
+    /**
+     * Keep a live table's blocks intact.
+     *
+     * <p>The table is real blocks now, so anyone can mine a seat out from under it and leave
+     * the plugin holding a table that is half gone. Admins are let through so a stuck table
+     * can still be cleaned up by hand.
+     */
+    @EventHandler(ignoreCancelled = true)
+    public void onBlockBreak(BlockBreakEvent event) {
+        if (event.getPlayer().hasPermission("uno.admin")) {
             return;
         }
-        for (UnoTable t : here) {
-            // Wait for the LAST of the table's chunks: spawning while a neighbour is still
-            // out would drop half the visuals into a chunk that unloads them straight away.
-            if (!t.isSpawned() && event.getWorld().equals(t.anchor().getWorld()) && fullyLoaded(t)) {
-                spawnVisuals(t);
-            }
+        if (tableAt(event.getBlock().getLocation()) != null) {
+            event.setCancelled(true);
+            messages.send(event.getPlayer(), "table.protected");
         }
     }
 
-    @EventHandler
-    public void onChunkUnload(ChunkUnloadEvent event) {
-        List<UnoTable> here = byChunk.get(chunkKey(event.getChunk().getX(), event.getChunk().getZ()));
-        if (here == null) {
-            return;
-        }
-        for (UnoTable t : here) {
-            if (t.isSpawned() && event.getWorld().equals(t.anchor().getWorld())) {
-                // Non-persistent entities unload with the chunk, but only the ones IN it —
-                // anything the table put in a still-loaded neighbour has to be taken down by
-                // hand, or it survives untracked and the next respawn doubles it up.
-                despawnVisuals(t);
+    /** The table owning this block position, or null. */
+    private UnoTable tableAt(Location loc) {
+        for (UnoTable t : tables.values()) {
+            if (!loc.getWorld().equals(t.anchor().getWorld())) {
+                continue;
+            }
+            // Cheap reject before walking the 13 positions.
+            if (t.anchor().distanceSquared(loc) > 16) {
+                continue;
+            }
+            for (Location owned : footprint(t)) {
+                if (owned.getBlockX() == loc.getBlockX()
+                        && owned.getBlockY() == loc.getBlockY()
+                        && owned.getBlockZ() == loc.getBlockZ()) {
+                    return t;
+                }
             }
         }
+        return null;
     }
 
     public Collection<UnoTable> tables() {
@@ -723,6 +667,73 @@ public class TableManager implements Listener {
 
     // -------------------------------------------------------------------- seats
 
+    /**
+     * Seat the player at the nearest table within {@code tables.join-radius} — the whole of
+     * {@code /uno join}.
+     *
+     * <p>Walking up and typing a command replaced clicking a seat entity, so the seat is
+     * chosen for the player: the free one nearest to where they are standing, which is the
+     * one they would have clicked. Every refusal reports itself, because from the player's
+     * side "nothing happened" is indistinguishable from a broken command.
+     */
+    public void joinNearest(Player player) {
+        if (seated.containsKey(player.getUniqueId())) {
+            messages.send(player, "table.already-seated");
+            return;
+        }
+        double radius = settings.joinRadius();
+        UnoTable table = nearest(player, radius);
+        if (table == null) {
+            messages.send(player, "table.none-near", "radius", radius);
+            return;
+        }
+        int index = nearestFreeSeat(table, player.getLocation());
+        if (index < 0) {
+            messages.send(player, "table.full");
+            return;
+        }
+        sit(player, table, index);
+    }
+
+    /** {@code /uno leave} — get up, or say so if you weren't sitting down. */
+    public void leaveNearest(Player player) {
+        if (!seated.containsKey(player.getUniqueId())) {
+            messages.send(player, "table.not-seated");
+            return;
+        }
+        // Ejecting fires EntityDismountEvent, and onDismount routes that into leaveSeat —
+        // so the bookkeeping and the "you stood up" message happen exactly once, there.
+        Entity vehicle = player.getVehicle();
+        if (vehicle != null) {
+            vehicle.eject();
+        } else {
+            leaveSeat(player);
+        }
+    }
+
+    /** The free seat closest to {@code from}, or -1 if every seat is taken. */
+    private int nearestFreeSeat(UnoTable table, Location from) {
+        int best = -1;
+        double bestDist = Double.MAX_VALUE;
+        List<Location> seats = table.seats();
+        for (int i = 0; i < seats.size(); i++) {
+            if (!table.isSeatFree(i)) {
+                continue;
+            }
+            Location seat = seats.get(i);
+            // Compare on X/Z only: standing on the table or in a hole beside it should not
+            // change which side of it you are on.
+            double dx = seat.getX() - from.getX();
+            double dz = seat.getZ() - from.getZ();
+            double dist = dx * dx + dz * dz;
+            if (dist < bestDist) {
+                bestDist = dist;
+                best = i;
+            }
+        }
+        return best;
+    }
+
     private void sit(Player player, UnoTable table, int index) {
         if (seated.containsKey(player.getUniqueId())) {
             messages.send(player, "table.already-seated");
@@ -737,8 +748,8 @@ public class TableManager implements Listener {
         if (w == null) {
             return;
         }
-        // Lift the rider up onto the stool cushion (cushion top ~0.54).
-        double sitLift = 0.55;
+        // Lift the rider up onto the stair's low step (step top = half a block).
+        double sitLift = 0.5;
         Location mountLoc = seat.clone();
         mountLoc.setY(seat.getY() + sitLift);
         ArmorStand mount = w.spawn(mountLoc, ArmorStand.class, as -> {
@@ -809,24 +820,6 @@ public class TableManager implements Listener {
             result.add(e.getKey());
         }
         return result;
-    }
-
-    @EventHandler
-    public void onSeatInteract(PlayerInteractEntityEvent event) {
-        if (event.getHand() != EquipmentSlot.HAND) {
-            return;
-        }
-        var pdc = event.getRightClicked().getPersistentDataContainer();
-        Integer index = pdc.get(seatKey, PersistentDataType.INTEGER);
-        String tableId = pdc.get(idKey, PersistentDataType.STRING);
-        if (index == null || tableId == null) {
-            return;
-        }
-        event.setCancelled(true);
-        UnoTable table = tables.get(UUID.fromString(tableId));
-        if (table != null) {
-            sit(event.getPlayer(), table, index);
-        }
     }
 
     @EventHandler

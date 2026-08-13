@@ -1,33 +1,118 @@
 package com.unoplugin.table;
 
 import org.bukkit.Location;
+import org.bukkit.Material;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
- * Base class for a placed UNO table.
+ * A placed UNO table.
  *
- * <p>Holds the logical/persisted state (id, anchor, facing) and computes seat
- * positions from simple table-space math. Subclasses define player limits and
- * seat layout. Visual Display Entities are owned by {@link TableManager}.
+ * <p>Holds the logical/persisted state (id, variant, anchor, facing) and computes seat
+ * positions from simple table-space math. The blocks it is built from are set into the
+ * world by {@link TableManager}.
+ *
+ * <p>All four variants are the same shape — a 3×3 block top with a stair pulled up to the
+ * middle of each side — and differ only in their block palette, so there is one concrete
+ * class and the palette lives in {@link Type}. Adding a fifth variant is one enum constant.
  */
-public abstract class UnoTable {
-
-    public enum Type { CASINO }
+public class UnoTable {
 
     /**
-     * Height of the felt surface above {@link #anchor}. Anything that sits ON the table —
-     * the card piles, the pot — measures from here, so it lives in one place rather than
-     * being re-typed as a magic 0.757 in each renderer.
+     * The four table variants. Each is a block palette over the shared 3×3-plus-four-stairs
+     * shape; {@code alias} is what players type after {@code /uno createtable}.
+     *
+     * <p>The materials here are only the DEFAULTS — {@code tables.<alias>.blocks.*} in
+     * config.yml overrides any of them, so a server can retheme a table without a rebuild
+     * (see {@link com.unoplugin.util.Settings#tableBlocks}).
      */
-    public static final double SURFACE_Y = 0.757;
+    public enum Type {
+        /** All-pink: stripped cherry keeps its colour on the sides as well as the rings. */
+        CHERRY("cherry", "Cherry Table",
+                Material.STRIPPED_CHERRY_LOG, Material.STRIPPED_PALE_OAK_LOG,
+                Material.STRIPPED_CHERRY_LOG, Material.CHERRY_STAIRS),
+        /** Pink rings, dark sides — unstripped cherry bark is the dark frame. */
+        DARK_CHERRY("darkcherry", "Dark Cherry Table",
+                Material.CHERRY_LOG, Material.PALE_OAK_LOG,
+                Material.CHERRY_LOG, Material.PALE_OAK_STAIRS),
+        /** Oak chequer with dark oak seats. */
+        OAK("oak", "Oak Table",
+                Material.OAK_LOG, Material.STRIPPED_OAK_LOG,
+                Material.OAK_LOG, Material.DARK_OAK_STAIRS),
+        /** Pale stripped oak against birch, oak seats. */
+        BIRCH("birch", "Birch Table",
+                Material.STRIPPED_OAK_LOG, Material.BIRCH_LOG,
+                Material.STRIPPED_OAK_LOG, Material.OAK_STAIRS);
 
-    protected final UUID id;
+        private final String alias;
+        private final String displayName;
+        private final Material topPrimary;
+        private final Material topSecondary;
+        private final Material frame;
+        private final Material seat;
+
+        Type(String alias, String displayName,
+             Material topPrimary, Material topSecondary, Material frame, Material seat) {
+            this.alias = alias;
+            this.displayName = displayName;
+            this.topPrimary = topPrimary;
+            this.topSecondary = topSecondary;
+            this.frame = frame;
+            this.seat = seat;
+        }
+
+        public String alias() { return alias; }
+
+        public String displayName() { return displayName; }
+
+        /** Chequer colour on the corners and the centre of the 3×3 top. */
+        public Material topPrimary() { return topPrimary; }
+
+        /** Chequer colour on the four edge tiles of the 3×3 top. */
+        public Material topSecondary() { return topSecondary; }
+
+        /** Legacy body colour; unused by the single-layer top, kept so removal still knows it. */
+        public Material frame() { return frame; }
+
+        /** The stair block players sit on. */
+        public Material seat() { return seat; }
+
+        /** Resolve a player-typed name ({@code blossom}, {@code MIDNIGHT}) to a variant. */
+        public static Type byAlias(String raw) {
+            if (raw == null) {
+                return null;
+            }
+            String needle = raw.toLowerCase(Locale.ROOT);
+            for (Type t : values()) {
+                if (t.alias.equals(needle) || t.name().toLowerCase(Locale.ROOT).equals(needle)) {
+                    return t;
+                }
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Height of the table surface above {@link #anchor}. Anything that sits ON the table —
+     * the card piles, the pot — measures from here, so it lives in one place rather than
+     * being re-typed as a magic number in each renderer.
+     *
+     * <p>The table is one layer of blocks, so the playable surface is exactly one block
+     * above the ground it was built on.
+     */
+    public static final double SURFACE_Y = 1.0;
+
+    /** Distance from the table centre to a seat, in blocks — one clear of the 3×3 top. */
+    private static final double SEAT_REACH = 2.0;
+
+    private final UUID id;
+    private final Type variant;
     /** Table centre: clicked-block top, +0.5 on X/Z. Surfaces and seats derive from this. */
     protected final Location anchor;
-    /** Facing, snapped to the nearest 90 degrees. Casino dealer sits at +forward. */
+    /** Facing, snapped to the nearest 90 degrees. */
     protected final float yaw;
     /**
      * The anchor's world, captured by NAME at construction.
@@ -41,27 +126,48 @@ public abstract class UnoTable {
     /** Per-seat occupant (null = empty). Sized once seats are computed. */
     private final UUID[] occupants;
 
+    private final int minPlayers;
+    private final int maxPlayers;
+
     // --- runtime visual state (never persisted) ---
     private final List<UUID> entityIds = new ArrayList<>();
     private boolean spawned = false;
 
-    protected UnoTable(UUID id, Location anchor, float yaw) {
+    public UnoTable(UUID id, Type variant, Location anchor, float yaw, int minPlayers, int maxPlayers) {
         this.id = id;
+        this.variant = variant;
         this.anchor = anchor;
         this.yaw = yaw;
         this.worldName = anchor.getWorld() == null ? null : anchor.getWorld().getName();
+        this.minPlayers = minPlayers;
+        this.maxPlayers = maxPlayers;
         computeSeats();
         this.occupants = new UUID[seats.size()];
     }
 
-    public abstract Type type();
+    public Type type() { return variant; }
 
-    public abstract int minPlayers();
+    public int minPlayers() {
+        return Math.min(minPlayers, seatCount());
+    }
 
-    public abstract int maxPlayers();
+    /** However high the config goes, you can't seat more players than there are stairs. */
+    public int maxPlayers() {
+        return Math.min(maxPlayers, seatCount());
+    }
 
-    /** Populate {@link #seats} from {@link #anchor} and {@link #yaw}. */
-    protected abstract void computeSeats();
+    /**
+     * One stair pulled up to the middle of each of the four sides, each facing the centre.
+     *
+     * <p>Seat order is near, far, left, right in table space, so seat 0 is the side the
+     * placer was standing on.
+     */
+    private void computeSeats() {
+        seats.add(seatAt(-SEAT_REACH, 0.0));
+        seats.add(seatAt(SEAT_REACH, 0.0));
+        seats.add(seatAt(0.0, -SEAT_REACH));
+        seats.add(seatAt(0.0, SEAT_REACH));
+    }
 
     // --- accessors ---
 
@@ -145,8 +251,8 @@ public abstract class UnoTable {
     }
 
     /**
-     * Build a seat location offset by {@code fwd} (toward dealer) and {@code rgt}
-     * in table space, standing on the table's ground plane and facing the centre.
+     * Build a seat location offset by {@code fwd} and {@code rgt} in table space, standing
+     * on the table's ground plane and facing the centre.
      */
     protected Location seatAt(double fwd, double rgt) {
         double[] f = forward();
@@ -158,16 +264,6 @@ public abstract class UnoTable {
         double dz = anchor.getZ() - z;
         seat.setYaw((float) Math.toDegrees(Math.atan2(-dx, dz)));
         seat.setPitch(0f);
-        return seat;
-    }
-
-    /**
-     * Same position as {@link #seatAt}, but with a fixed facing of {@code yaw + yawOffset}
-     * (so a row of seats all face straight at the table, not angled toward the centre).
-     */
-    protected Location seatFacing(double fwd, double rgt, float yawOffset) {
-        Location seat = seatAt(fwd, rgt);
-        seat.setYaw(yaw + yawOffset);
         return seat;
     }
 }

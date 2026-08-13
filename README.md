@@ -1,10 +1,11 @@
 # UNO
 
-A fully playable multiplayer UNO card game for **Paper 26.2** — placeable casino tables with sittable
-stools and a fish dealer, a real 3D card fan held in your hand, card piles that sit on the felt for
-everyone to see, and an optional "Let It Ride" mode where you wager items on a hand.
+A fully playable multiplayer UNO card game for **Paper 26.2** — four variants of a placeable table
+with stair seats, a card fan held in your hand, card piles that sit on the table for everyone to
+see, and an optional "Let It Ride" mode where you wager items on a hand.
 
-No mods. Everything is built from vanilla display entities plus a client-side resource pack.
+No mods. Tables are ordinary blocks; everything else is vanilla display entities plus a
+client-side resource pack.
 
 ---
 
@@ -35,16 +36,37 @@ No mods. Everything is built from vanilla display entities plus a client-side re
 
 ## Playing
 
-Get a table, place it, sit down, deal:
+Build a table, sit down, deal:
 
 ```
-/uno give table        # admin — puts a Casino Table item in your inventory
-                       # right-click the ground to place it (needs ~4 blocks of clearance)
-                       # right-click a stool to sit, Shift to stand
+/uno createtable <theme>   # admin — builds a table on the ground in front of you
+                       # cherry | darkcherry | oak | birch
+/uno join              # stand next to a table and take the nearest free seat
+/uno leave             # get up (Shift does the same)
+/uno quit              # drop out of the hand you're in — others play on
+/uno stop              # end the hand at your table for everyone
 /uno start [bots]      # deal a hand to everyone seated at your table
 ```
 
-You need at least 2 players; a casino table seats 6. Bots can fill the empty chairs.
+You need at least 2 players; every table seats 4. Bots can fill the empty chairs.
+
+### Table variants
+
+All four are the same table — a 3×3 chequered top of logs with a stair pulled up to each side — in
+different blocks. They are **real blocks set into the world**, not display entities, so they save
+with the chunk and cost nothing to render. Retheme any under `tables.<theme>.blocks.*` in
+`config.yml`.
+
+Each is named for the wood it's made of. Cherry appears twice on purpose: stripped cherry is pink
+on every face, while unstripped cherry keeps pink rings on top and dark bark down the sides — that
+dark frame is the bark, not a separate block.
+
+| Theme | Top | Seats |
+|---|---|---|
+| `cherry` | stripped cherry & stripped pale oak | cherry stairs |
+| `darkcherry` | cherry & pale oak (dark bark sides) | pale oak stairs |
+| `oak` | oak & stripped oak | dark oak stairs |
+| `birch` | stripped oak & birch | oak stairs |
 
 ### Controls
 
@@ -105,10 +127,14 @@ All subcommands tab-complete; admin ones are hidden from players who can't use t
 | Command | Permission | |
 |---|---|---|
 | `/uno help` | `uno.play` | Command list, filtered by what you can run |
+| `/uno join` | `uno.play` | Sit at the nearest table (alias: `/uno sit`) |
+| `/uno leave` | `uno.play` | Get up (alias: `/uno stand`; Shift does the same) |
 | `/uno start [bots]` | `uno.play` | Deal a hand to everyone seated at your table |
+| `/uno quit` | `uno.play` | Drop out of your hand; others play on (alias: `/uno forfeit`) |
+| `/uno stop` | `uno.play` | End the hand at your table (refused while a pot is riding) |
 | `/uno version` | `uno.play` | Plugin version |
 | `/gamble …` | `uno.gamble` | Wagering — see above (aliases: `/bet`, `/ante`, `/letitride`) |
-| `/uno give table` | `uno.admin` | Get a placeable Casino Table |
+| `/uno createtable <theme>` | `uno.admin` | Build a table in front of you (cherry, darkcherry, oak, birch) |
 | `/uno remove` | `uno.admin` | Remove the nearest table within 5 blocks (refused mid-hand) |
 | `/uno list` | `uno.admin` | Every placed table: id, world, coordinates, occupancy |
 | `/uno info` | `uno.admin` | Running hands and open pots |
@@ -179,7 +205,7 @@ src/main/java/com/unoplugin/
   command/              UnoCommand + GambleCommand (routing, permissions, tab completion)
   game/                 UnoGame (pure rules), Card, Deck, GameManager, PileRenderer
   hand/HandManager      the held 3D card fan + all player input while it's up
-  table/                UnoTable/CasinoTable geometry, TableManager (placement, seats, visuals)
+  table/                UnoTable geometry + variant palettes, TableManager (placement, seats, visuals)
   bet/                  BetManager, BetSession, EscrowStore, PotRenderer, BetLog
   util/                 Settings (config), Messages (messages.yml), NameCache, ResourcePackSender
   debug/CardTester      throwaway visual test helpers, gated behind `debug: true`
