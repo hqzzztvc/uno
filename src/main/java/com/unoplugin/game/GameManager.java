@@ -9,6 +9,7 @@ import com.unoplugin.util.NameCache;
 import com.unoplugin.util.Settings;
 import net.kyori.adventure.bossbar.BossBar;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
@@ -230,7 +231,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
      */
     private UUID launch(List<UUID> players, UnoTable table) {
         UUID gameId = UUID.randomUUID();
-        UnoGame game = new UnoGame(gameId, players);
+        UnoGame game = new UnoGame(gameId, players, settings.rules());
         game.setNamer(this::displayName);
         game.start(settings.startingHandSize());
         games.put(gameId, game);
@@ -286,7 +287,20 @@ public final class GameManager implements Listener, HandManager.CardActions {
         if (game == null) {
             return false;
         }
-        handleResult(game, player.getUniqueId(), game.play(player.getUniqueId(), selectedIndex), player);
+        UUID id = player.getUniqueId();
+        // Out of turn, the same click means jump-in if the rule is on. Trying it here rather
+        // than making the player press something else is the point of the rule: you spot the
+        // matching card and slap it down. It falls through to the ordinary "not your turn"
+        // refusal when the card doesn't match, so nothing is lost when it isn't a jump-in.
+        if (game.rules().jumpIn() && !id.equals(game.currentPlayer())) {
+            UnoGame.PlayResult jump = game.jumpIn(id, selectedIndex);
+            if (jump.status != UnoGame.PlayResult.Status.ILLEGAL) {
+                broadcast(game, messages.get("game.jump-in", "player", displayName(id)));
+                handleResult(game, id, jump, player);
+                return true;
+            }
+        }
+        handleResult(game, id, game.play(id, selectedIndex), player);
         return true;
     }
 
@@ -320,6 +334,42 @@ public final class GameManager implements Listener, HandManager.CardActions {
                     // An unanswered colour prompt stalls the table just as hard as an idle turn.
                     armTurnTimer(game, actor);
                 }
+            }
+            case NEED_SWAP -> {
+                updateDiscard(game, r.card);
+                if (isBot(actor)) {
+                    handleResult(game, actor, game.chooseSwap(actor, botSwapTarget(game, actor)), null);
+                } else {
+                    if (actorPlayer != null) {
+                        openSwapGui(actorPlayer, game);
+                    }
+                    // An unanswered swap stalls the table exactly like an unanswered wild.
+                    armTurnTimer(game, actor);
+                }
+            }
+            case NEED_CHALLENGE -> {
+                updateDiscard(game, r.card);
+                playEffects(game, r);
+                UUID victim = r.target;
+                if (isBot(victim)) {
+                    // A bot never challenges: it has no way to reason about the bluff, and
+                    // guessing would just tax whoever it is sitting next to.
+                    handleResult(game, victim, game.respondToDraw4(victim, false), null);
+                } else {
+                    promptChallenge(game, victim);
+                    armTurnTimer(game, victim);
+                }
+                renderHands(game);
+                updateBar(game);
+            }
+            case CHALLENGED -> {
+                afterMove(game);
+            }
+            case STACKED -> {
+                updateDiscard(game, r.card);
+                playEffects(game, r);
+                announceStack(game, r);
+                afterMove(game);
             }
             case DREW -> {
                 drawEffects(game, r, actorPlayer);
@@ -432,8 +482,11 @@ public final class GameManager implements Listener, HandManager.CardActions {
     }
 
     /**
-     * Call UNO for anyone down to their last card — once, until they pick cards back up.
-     * A player who draws back up to two and returns to one gets called again, as they should.
+     * Announce anyone down to their last card — once, until they pick cards back up.
+     *
+     * <p>This is the plugin calling UNO <em>for</em> the player, which is what happens when the
+     * callout rule is off. With it on, {@link #checkExposure} takes over and the player has to
+     * call it themselves.
      */
     private void unoEffects(UnoGame game) {
         Set<UUID> called = onOneCard.computeIfAbsent(game.id(), k -> new HashSet<>());
@@ -457,6 +510,223 @@ public final class GameManager implements Listener, HandManager.CardActions {
         }
     }
 
+    // ------------------------------------------------------------ UNO call-outs
+
+    /** One open callout window: who is exposed, in which game, and the task that closes it. */
+    private record Exposure(UUID gameId, BukkitTask closer, BukkitTask botCall) { }
+
+    /** Keyed by the exposed player — a player is only ever in one game at a time. */
+    private final Map<UUID, Exposure> exposures = new HashMap<>();
+
+    /**
+     * Open a callout window on anyone newly down to one card, and shut one that no longer applies.
+     *
+     * <p>Called on every move, so it has to be idempotent: a player already inside their window
+     * must not be re-prompted, and the window has to close the moment their hand stops being
+     * one card — including because somebody swapped it away from them under seven-O.
+     */
+    private void checkExposure(UnoGame game) {
+        if (!game.rules().unoCallout()) {
+            unoEffects(game);
+            return;
+        }
+        for (UUID p : game.players()) {
+            Exposure open = exposures.get(p);
+            boolean stillOne = game.handSize(p) == 1;
+            if (!stillOne || game.isOver()) {
+                if (open != null && open.gameId().equals(game.id())) {
+                    closeExposure(p, null);
+                }
+                continue;
+            }
+            if (game.hasCalledUno(p) || open != null) {
+                continue;
+            }
+            openExposure(game, p);
+        }
+    }
+
+    /**
+     * Start the countdown on a player who has just reached one card.
+     *
+     * <p>They get a button to call UNO; everybody else gets a button to call them out. Both are
+     * click-to-run so nobody has to type a command against a clock — the window is a few
+     * seconds and typing a name would decide it on keyboard speed rather than attention.
+     */
+    private void openExposure(UnoGame game, UUID player) {
+        int seconds = game.rules().unoWindowSeconds();
+        PileRenderer pile = piles.get(game.id());
+        Player pl = Bukkit.getPlayer(player);
+        if (pl != null) {
+            messages.send(pl, "game.uno-call-prompt", "seconds", seconds,
+                    "button", button("game.uno-call-button", "/uno uno"));
+            messages.title(pl, "game.uno-title", "game.uno-subtitle");
+            fx.uno(pl, pile == null ? null : pile.discardLocation());
+        }
+        Component calloutButton = button("game.uno-callout-button", "/uno callout " + displayName(player));
+        for (UUID other : game.players()) {
+            if (other.equals(player) || isBot(other)) {
+                continue;
+            }
+            Player op = Bukkit.getPlayer(other);
+            if (op != null) {
+                messages.send(op, "game.uno-callout-prompt",
+                        "player", displayName(player), "seconds", seconds, "button", calloutButton);
+                fx.uno(op, pile == null ? null : pile.discardLocation());
+            }
+        }
+
+        UUID gid = game.id();
+        BukkitTask closer = plugin.getServer().getScheduler().runTaskLater(plugin,
+                () -> closeExposure(player, gid), (long) seconds * 20L);
+        // A bot calls its own UNO somewhere inside the window rather than instantly, so beating
+        // it to the call-out is a real race won by paying attention — not a coin flip, and not
+        // an arbitrary "bots sometimes forget" constant.
+        BukkitTask botCall = null;
+        if (isBot(player)) {
+            long delay = 20L + ThreadLocalRandom.current().nextInt(Math.max(1, seconds * 20 - 30));
+            botCall = plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+                UnoGame g = games.get(gid);
+                if (g != null && g.callUno(player)) {
+                    broadcast(g, messages.get("game.uno-called", "player", displayName(player)));
+                    closeExposure(player, gid);
+                }
+            }, delay);
+        }
+        exposures.put(player, new Exposure(gid, closer, botCall));
+    }
+
+    /**
+     * Shut a callout window.
+     *
+     * <p>{@code gameId} non-null means the countdown ran out: the player survived it and is
+     * marked as having called, so they aren't prompted again on the same card. Null means the
+     * window is being torn down for another reason (they were caught, they called, their hand
+     * changed) and no such grace is given.
+     */
+    private void closeExposure(UUID player, UUID gameId) {
+        Exposure open = exposures.remove(player);
+        if (open != null) {
+            open.closer().cancel();
+            if (open.botCall() != null) {
+                open.botCall().cancel();
+            }
+        }
+        if (gameId == null) {
+            return;
+        }
+        UnoGame game = games.get(gameId);
+        if (game != null && game.isExposed(player)) {
+            game.callUno(player); // they rode out the window — safe until they draw again
+            Player pl = Bukkit.getPlayer(player);
+            if (pl != null) {
+                messages.send(pl, "game.uno-safe");
+            }
+        }
+    }
+
+    /** Drop every open window belonging to a game that is finishing. */
+    private void clearExposures(UUID gameId) {
+        for (UUID p : new ArrayList<>(exposures.keySet())) {
+            Exposure e = exposures.get(p);
+            if (e != null && e.gameId().equals(gameId)) {
+                closeExposure(p, null);
+            }
+        }
+    }
+
+    /** {@code /uno uno} — call it on yourself. */
+    public void callUno(Player player) {
+        UnoGame game = gameOf(player.getUniqueId());
+        if (game == null) {
+            messages.send(player, "game.not-in-game");
+            return;
+        }
+        if (!game.rules().unoCallout()) {
+            messages.send(player, "game.uno-not-enabled");
+            return;
+        }
+        if (!game.callUno(player.getUniqueId())) {
+            messages.send(player, "game.uno-not-on-one");
+            return;
+        }
+        closeExposure(player.getUniqueId(), null);
+        broadcast(game, messages.get("game.uno-called", "player", displayName(player.getUniqueId())));
+        PileRenderer pile = piles.get(game.id());
+        fx.uno(player, pile == null ? null : pile.discardLocation());
+    }
+
+    /** {@code /uno callout <player>} — catch somebody who never called. */
+    public void callOut(Player accuser, String targetName) {
+        UnoGame game = gameOf(accuser.getUniqueId());
+        if (game == null) {
+            messages.send(accuser, "game.not-in-game");
+            return;
+        }
+        if (!game.rules().unoCallout()) {
+            messages.send(accuser, "game.uno-not-enabled");
+            return;
+        }
+        UUID target = resolveAtTable(game, targetName);
+        if (target == null) {
+            messages.send(accuser, "game.callout-no-target", "player", targetName);
+            return;
+        }
+        UnoGame.CalloutResult result = game.callOut(accuser.getUniqueId(), target);
+        if (!result.allowed()) {
+            messages.send(accuser, "game.callout-not-allowed");
+            return;
+        }
+        if (result.caught()) {
+            closeExposure(target, null);
+            broadcast(game, messages.get("game.callout-caught",
+                    "accuser", displayName(accuser.getUniqueId()),
+                    "player", displayName(target), "count", result.drawn()));
+        } else {
+            broadcast(game, messages.get("game.callout-wrong",
+                    "accuser", displayName(accuser.getUniqueId()),
+                    "player", displayName(target), "count", result.drawn()));
+        }
+        Player punished = Bukkit.getPlayer(result.punished());
+        if (punished != null) {
+            fx.denied(punished);
+        }
+        afterMove(game);
+    }
+
+    /** Everyone in this player's hand except themselves, by display name, for tab completion. */
+    public List<String> opponentNames(UUID playerId) {
+        UnoGame game = gameOf(playerId);
+        if (game == null) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        for (UUID p : game.players()) {
+            if (!p.equals(playerId)) {
+                out.add(displayName(p));
+            }
+        }
+        return out;
+    }
+
+    /** Match a typed name against the players actually in this game. */
+    private UUID resolveAtTable(UnoGame game, String name) {
+        if (name == null || name.isBlank()) {
+            return null;
+        }
+        for (UUID p : game.players()) {
+            if (displayName(p).equalsIgnoreCase(name)) {
+                return p;
+            }
+        }
+        return null;
+    }
+
+    /** A click-to-run chat button whose label comes from messages.yml. */
+    private Component button(String labelKey, String command) {
+        return messages.get(labelKey).clickEvent(ClickEvent.runCommand(command));
+    }
+
     /** Where to put an effect meant for a player: their own spot, or the table for a bot. */
     private Location locationOf(UUID player, Location fallback) {
         Player pl = player == null ? null : Bukkit.getPlayer(player);
@@ -470,7 +740,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
         }
         renderHands(game);
         updateBar(game);
-        unoEffects(game);
+        checkExposure(game);
         PileRenderer pile = piles.get(game.id());
         if (pile != null) {
             pile.setDrawCount(game.drawPileSize()); // step the deck block down a size
@@ -568,6 +838,19 @@ public final class GameManager implements Listener, HandManager.CardActions {
             handleResult(game, actor, game.chooseColor(actor, preferredColor(game, actor)), p);
             return;
         }
+        if (actor.equals(game.pendingSwapPlayer())) {
+            if (p != null) {
+                p.closeInventory();
+            }
+            handleResult(game, actor, game.chooseSwap(actor, botSwapTarget(game, actor)), p);
+            return;
+        }
+        if (actor.equals(game.pendingChallengePlayer())) {
+            // Idle out of a challenge by taking the cards: challenging on their behalf could
+            // cost them two more than staying quiet would have.
+            handleResult(game, actor, game.respondToDraw4(actor, false), p);
+            return;
+        }
         if (!actor.equals(game.currentPlayer())) {
             return;
         }
@@ -587,6 +870,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
             broadcast(game, messages.get("game.win", "player", displayName(winner)));
         }
         cancelTurnTimer(gid);
+        clearExposures(gid); // scheduled closers must not outlive the game they belong to
         lastTurn.remove(gid);
         onOneCard.remove(gid);
         BossBar bar = bars.remove(gid);
@@ -769,6 +1053,134 @@ public final class GameManager implements Listener, HandManager.CardActions {
                         game.chooseColor(p.getUniqueId(), preferredColor(game, p.getUniqueId())), p);
             }
         });
+    }
+
+    // ------------------------------------------------------------ seven-O swap
+
+    /**
+     * Pick whose hand to take after playing a 7.
+     *
+     * <p>A head per opponent, labelled with how many cards they are holding — the only thing
+     * anyone actually decides on. Reuses the colour picker's shape so the two prompts feel
+     * like the same game.
+     */
+    private void openSwapGui(Player p, UnoGame game) {
+        SwapPickerHolder holder = new SwapPickerHolder(game.id());
+        List<UUID> others = new ArrayList<>();
+        for (UUID other : game.players()) {
+            if (!other.equals(p.getUniqueId())) {
+                others.add(other);
+            }
+        }
+        int size = Math.max(9, ((others.size() - 1) / 9 + 1) * 9);
+        Inventory inv = Bukkit.createInventory(holder, size, messages.get("game.swap-title"));
+        holder.inventory = inv;
+        for (int i = 0; i < others.size() && i < size; i++) {
+            UUID other = others.get(i);
+            ItemStack head = new ItemStack(Material.PLAYER_HEAD);
+            ItemMeta meta = head.getItemMeta();
+            meta.displayName(messages.get("game.swap-entry",
+                    "player", displayName(other), "count", game.handSize(other)));
+            head.setItemMeta(meta);
+            inv.setItem(i, head);
+            holder.slots.put(i, other);
+        }
+        p.openInventory(inv);
+    }
+
+    @EventHandler
+    public void onSwapClick(InventoryClickEvent event) {
+        if (!(event.getInventory().getHolder() instanceof SwapPickerHolder holder)) {
+            return;
+        }
+        event.setCancelled(true);
+        UUID target = holder.slots.get(event.getSlot());
+        if (target == null || !(event.getWhoClicked() instanceof Player p)) {
+            return;
+        }
+        UnoGame game = games.get(holder.gameId);
+        p.closeInventory();
+        if (game != null) {
+            handleResult(game, p.getUniqueId(), game.chooseSwap(p.getUniqueId(), target), p);
+        }
+    }
+
+    @EventHandler
+    public void onSwapClose(InventoryCloseEvent event) {
+        if (!(event.getInventory().getHolder() instanceof SwapPickerHolder holder)
+                || !(event.getPlayer() instanceof Player p)) {
+            return;
+        }
+        // Closed without picking — take the biggest hand next tick so the table isn't stalled.
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            UnoGame game = games.get(holder.gameId);
+            if (game != null && p.getUniqueId().equals(game.pendingSwapPlayer())) {
+                handleResult(game, p.getUniqueId(),
+                        game.chooseSwap(p.getUniqueId(), botSwapTarget(game, p.getUniqueId())), p);
+            }
+        });
+    }
+
+    /** Who a bot (or an unanswered prompt) swaps with: whoever is holding the most cards. */
+    private UUID botSwapTarget(UnoGame game, UUID actor) {
+        UUID best = null;
+        int most = -1;
+        for (UUID p : game.players()) {
+            if (p.equals(actor)) {
+                continue;
+            }
+            int n = game.handSize(p);
+            if (n > most) {
+                most = n;
+                best = p;
+            }
+        }
+        return best;
+    }
+
+    // --------------------------------------------------------- the +4 challenge
+
+    /** Offer the target of a +4 the choice of taking it or calling the bluff. */
+    private void promptChallenge(UnoGame game, UUID victim) {
+        Player pl = Bukkit.getPlayer(victim);
+        if (pl == null) {
+            return;
+        }
+        messages.send(pl, "game.draw4-prompt",
+                "challenge", button("game.draw4-challenge-button", "/uno challenge"),
+                "accept", button("game.draw4-accept-button", "/uno takeit"));
+    }
+
+    /** {@code /uno challenge} and {@code /uno takeit} — answer a +4 aimed at you. */
+    public void respondToDraw4(Player player, boolean challenge) {
+        UnoGame game = gameOf(player.getUniqueId());
+        if (game == null || !player.getUniqueId().equals(game.pendingChallengePlayer())) {
+            messages.send(player, "game.no-challenge");
+            return;
+        }
+        handleResult(game, player.getUniqueId(),
+                game.respondToDraw4(player.getUniqueId(), challenge), player);
+    }
+
+    // ------------------------------------------------------------ draw stacking
+
+    /** Tell the table a stack is building and what the player on the spot can do about it. */
+    private void announceStack(UnoGame game, UnoGame.PlayResult r) {
+        UUID onTheSpot = r.target;
+        for (UUID p : game.players()) {
+            Player pl = Bukkit.getPlayer(p);
+            if (pl == null) {
+                continue;
+            }
+            if (p.equals(onTheSpot)) {
+                messages.send(pl, game.canStack(p) ? "game.stack-you-can" : "game.stack-you-cant",
+                        "count", r.amount);
+                fx.penalty(pl.getLocation(), r.amount);
+            } else {
+                messages.send(pl, "game.stack-building",
+                        "player", displayName(onTheSpot), "count", r.amount);
+            }
+        }
     }
 
     /** The colour the player holds most of (for auto-pick); RED if none. */
@@ -977,6 +1389,22 @@ public final class GameManager implements Listener, HandManager.CardActions {
         Inventory inventory;
 
         ColorPickerHolder(UUID gameId) {
+            this.gameId = gameId;
+        }
+
+        @Override
+        public Inventory getInventory() {
+            return inventory;
+        }
+    }
+
+    /** The seven-O "whose hand do you want?" window, and which slot means which player. */
+    private static final class SwapPickerHolder implements InventoryHolder {
+        final UUID gameId;
+        final Map<Integer, UUID> slots = new HashMap<>();
+        Inventory inventory;
+
+        SwapPickerHolder(UUID gameId) {
             this.gameId = gameId;
         }
 

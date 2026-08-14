@@ -205,6 +205,65 @@ command/  UnoCommand (routing + permissions + tab completion), GambleCommand
   touches game rules; it reacts to `onGameEnd` / `onForfeit`.
 - Order matters at shutdown: `BetManager.shutdown()` refunds before games and tables tear down.
 
+### House rules
+
+UNO has no single agreed rulebook, so the variants people actually play are toggles in
+`rules.*` (config.yml) collected into a `RuleSet` and handed to `UnoGame` at construction.
+**Every rule defaults to off** — upgrading must never silently change the game a server is
+already running. `RuleSet` is a plain record with no Bukkit in it, so a test constructs any
+combination directly instead of going through config.
+
+Rules are read when a hand is **dealt**, so `/uno reload` lands on the next hand, not mid-game.
+
+- **`canPlay` is the single gate.** Every caller — `play`, `jumpIn`, `legalIndices`,
+  `firstLegalIndex`, the bots, the hint — goes through it. That is what stops a bot cheerfully
+  playing a green 5 to escape a +8: while a stack is pending, a matching colour counts for
+  nothing and only another draw card is legal.
+- **Stacking defers the penalty rather than dealing it.** `pendingDraw` accumulates and
+  `draw()` is what finally collects it. `finishWin` adds any pending stack to the last card's
+  own penalty, so winning off the back of a stack still hands the pile to the next player.
+- **`resolve` takes a LIST of cards, always.** Single plays call it with a one-element list.
+  Effects add up rather than replace: each Skip/+2/+4 moves the turn one further on, each
+  Reverse flips the direction (or acts as a skip with two players left), and draw penalties
+  total. It is the only reading where one Skip and two Skips stay consistent.
+- **`colorBeforePlay` is captured in `commitPlay`, never reconstructed.** A +4 is a wild, so by
+  the time a challenge is set up its player has already picked a new colour and `activeColor`
+  is that choice; the card underneath may itself be a wild whose colour says nothing. Reading
+  it back off the discard pile convicts the innocent. Same reason `draw4Hand` is a snapshot:
+  by the time anyone challenges, the accused may have drawn from a stack or been swapped.
+- **An upheld challenge advances by 1, a declined one by `1 + extraSkips`.** `resolve` hands
+  the challenge back *without* advancing, so the turn is still sitting on the +4's player.
+  Being right means the challenger isn't skipped — they get the turn.
+- **Seven-O reads the rank, not the count.** Laying three 7s is still one swap. `rotateHands`
+  takes from the seat the direction came *from* so hands travel with play, and both it and
+  `chooseSwap` call `recheckUnoCalls` — a swap can hand somebody their last card, or take one
+  away, and a stale "called UNO" would either shield or expose the wrong player.
+- **`forfeit` must drop every pending prompt the leaver owed an answer to** (colour, swap,
+  challenge), or the table waits forever on somebody who isn't there.
+
+### Calling UNO
+
+With `rules.uno-callout.enabled` off, the plugin announces UNO for the player, as it always
+did (`unoEffects`). With it on, `checkExposure` takes over: reaching one card opens a timed
+window, the player gets a click-to-run **[ CALL UNO! ]** button and everyone else gets
+**[ CALL THEM OUT ]**.
+
+- Buttons are built in Java with `ClickEvent.runCommand` and passed to `Messages` as a
+  **Component** placeholder. That matters: `Messages` inserts plain values *unparsed*, so a
+  player called `<red>oops` can't smuggle formatting — but a Component placeholder is inserted
+  as-is, which is exactly what a button needs. The command string is assembled in Java, never
+  from player text.
+- `checkExposure` runs on every move and **must stay idempotent**: a player already inside
+  their window must not be re-prompted, and the window has to close the moment their hand
+  stops being one card — including because seven-O swapped it away from them.
+- `closeExposure(player, gameId)` with a non-null id means the countdown ran out, and marks
+  them as having called so they aren't prompted again on the same card. Null means the window
+  is being torn down for another reason (caught, called, hand changed) and no grace is given.
+- `endGame` calls `clearExposures`: a scheduled closer must not outlive its game.
+- **Bots call their own UNO at a random point inside the window**, not instantly and not on a
+  "bots sometimes forget" constant. Beating one to the call-out is then a real race won by
+  paying attention rather than a coin flip.
+
 ### In-world entities
 
 All visuals are `ItemDisplay` / `BlockDisplay` / `TextDisplay` entities spawned with

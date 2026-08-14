@@ -1,5 +1,6 @@
 package com.unoplugin.util;
 
+import com.unoplugin.game.RuleSet;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.configuration.file.FileConfiguration;
@@ -29,6 +30,7 @@ public final class Settings {
     private int startingHandSize;
     private int turnTimeoutSeconds;
     private int turnWarningSeconds;
+    private RuleSet rules = RuleSet.VANILLA;
 
     // tables
     private int maxTablesPerWorld;
@@ -75,6 +77,23 @@ public final class Settings {
         if (turnWarningSeconds >= turnTimeoutSeconds) {
             turnWarningSeconds = 0; // a warning at or after the deadline is no warning at all
         }
+
+        // Every house rule is off unless a server turns it on: an upgrade must not silently
+        // change the game people are already playing.
+        rules = new RuleSet(
+                c.getBoolean("rules.stacking.enabled", false),
+                c.getBoolean("rules.stacking.draw4-on-draw2", true),
+                c.getBoolean("rules.stacking.draw2-on-draw4", false),
+                c.getBoolean("rules.multi-play.enabled", false),
+                Math.max(0, c.getInt("rules.multi-play.max-cards", 0)),
+                c.getBoolean("rules.jump-in", false),
+                c.getBoolean("rules.seven-o", false),
+                c.getBoolean("rules.draw-to-match", false),
+                c.getBoolean("rules.challenge-draw4", false),
+                c.getBoolean("rules.uno-callout.enabled", false),
+                Math.max(1, c.getInt("rules.uno-callout.window-seconds", 5)),
+                Math.max(0, c.getInt("rules.uno-callout.penalty", 2)),
+                Math.max(0, c.getInt("rules.uno-callout.false-callout-penalty", 2)));
 
         maxTablesPerWorld = Math.max(0, c.getInt("tables.max-per-world", 0));
         joinRadius = Math.max(1.0, c.getDouble("tables.join-radius", 4.0));
@@ -129,6 +148,11 @@ public final class Settings {
 
     public int turnWarningSeconds() {
         return turnWarningSeconds;
+    }
+
+    /** The house rules every new hand is dealt under. */
+    public RuleSet rules() {
+        return rules;
     }
 
     // ------------------------------------------------------------------ tables

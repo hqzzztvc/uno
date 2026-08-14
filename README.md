@@ -174,6 +174,45 @@ any of them installed. **Always give a custom id a fallback** — without one, a
 plugin gets a plain default block in that cell.
 
 
+## House rules
+
+UNO has no single agreed rulebook, so the popular variants are toggles in `config.yml` under
+`rules:`. **All of them are off by default** — the game plays exactly by the official rules
+until you turn something on. They are read when a hand is dealt, so `/uno reload` applies to
+the next hand rather than the one in progress.
+
+| Rule | Key | What it does |
+|---|---|---|
+| Stacking | `rules.stacking.enabled` | Answer a +2 with your own instead of drawing. The pile accumulates and lands on the first player who can't or won't add to it. Sub-toggles: `draw4-on-draw2`, `draw2-on-draw4` |
+| Same-rank multi-play | `rules.multi-play.enabled` | Lay several cards of the same rank in one turn. Every card still takes effect: two Skips skip two players. `max-cards: 0` for no limit |
+| Jump-in | `rules.jump-in` | Holding the exact card that's showing (same colour *and* rank) lets you play it out of turn, and play jumps to you. Just left-click it in your fan |
+| Seven-O | `rules.seven-o` | A 7 swaps your hand with a player you pick; a 0 moves every hand one seat around |
+| Draw to match | `rules.draw-to-match` | Keep drawing until something is playable — and keep the turn, so you can play it |
+| +4 challenge | `rules.challenge-draw4` | The official rule. A +4 is only legal if its player had nothing matching the colour showing. Catch a bluff and they draw 4; challenge an honest one and you draw 6 |
+
+### Calling UNO
+
+By default the plugin calls UNO for you. Turn on `rules.uno-callout.enabled` and players have
+to call it themselves:
+
+```yaml
+rules:
+  uno-callout:
+    enabled: true
+    window-seconds: 5          # how long the window stays open
+    penalty: 2                 # cards drawn by a player who gets caught
+    false-callout-penalty: 2   # cards drawn for accusing somebody who was safe
+```
+
+The moment a hand drops to one card, that player gets a clickable **[ CALL UNO! ]** and
+everyone else gets **[ CALL THEM OUT ]**. Click first and you win the exchange. Ride out the
+window without being caught and you're safe until you pick cards up again. `/uno uno` and
+`/uno callout <player>` do the same thing if you'd rather type.
+
+Bots call their own UNO at a random moment inside the window, so catching one is a genuine
+race rather than a coin flip.
+
+
 ## Commands
 
 All subcommands tab-complete; admin ones are hidden from players who can't use them.
@@ -186,6 +225,8 @@ All subcommands tab-complete; admin ones are hidden from players who can't use t
 | `/uno start [bots]` | `uno.play` | Deal a hand to everyone seated at your table |
 | `/uno quit` | `uno.play` | Drop out of your hand; others play on (alias: `/uno forfeit`) |
 | `/uno stop` | `uno.play` | End the hand at your table (refused while a pot is riding) |
+| `/uno uno` | `uno.play` | Call UNO when you're down to one card (usually clicked, not typed) |
+| `/uno callout <player>` | `uno.play` | Catch a player on one card who never called |
 | `/uno version` | `uno.play` | Plugin version |
 | `/gamble …` | `uno.gamble` | Wagering — see above (aliases: `/bet`, `/ante`, `/letitride`) |
 | `/uno give <casual\|casino> <theme>` | `uno.admin` | A placeable table item; right-click the ground with it. Casino is not implemented yet |

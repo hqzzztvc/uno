@@ -39,7 +39,8 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
             "red_1", "yellow_5", "green_skip", "blue_9", "red_draw2", "wild", "green_3");
 
     private static final List<String> PUBLIC_SUBS = List.of(
-            "help", "version", "join", "leave", "start", "quit", "stop", "gamble");
+            "help", "version", "join", "leave", "start", "quit", "stop", "gamble",
+            "uno", "callout");
     private static final List<String> ADMIN_SUBS = List.of(
             "give", "theme", "remove", "list", "info", "tp", "end", "refund", "reload", "play");
     private static final List<String> DEBUG_SUBS = List.of(
@@ -92,6 +93,10 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
             case "quit", "forfeit" -> quit(sender);
             case "stop" -> stop(sender);
             case "gamble", "bet", "letitride" -> gamble(sender, rest);
+            case "uno" -> callUno(sender);
+            case "callout" -> callOut(sender, rest);
+            case "challenge" -> respondToDraw4(sender, true);
+            case "takeit" -> respondToDraw4(sender, false);
 
             case "reload" -> reload(sender);
             case "give" -> give(sender, rest);
@@ -124,6 +129,8 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         messages.send(sender, "plugin.help-play");
         messages.send(sender, "plugin.help-quit");
         messages.send(sender, "plugin.help-stop");
+        messages.send(sender, "plugin.help-uno");
+        messages.send(sender, "plugin.help-callout");
         messages.send(sender, "plugin.help-gamble");
         messages.send(sender, "plugin.help-version");
         if (!sender.hasPermission("uno.admin")) {
@@ -198,6 +205,35 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         Player player = asPlayer(sender);
         if (player != null) {
             bets.command(player, args);
+        }
+    }
+
+    /** Call UNO on yourself. Usually reached by clicking the prompt rather than typing. */
+    private void callUno(CommandSender sender) {
+        Player player = asPlayer(sender);
+        if (player != null) {
+            games.callUno(player);
+        }
+    }
+
+    /** Catch somebody sitting on one card who never called it. */
+    private void callOut(CommandSender sender, String[] args) {
+        Player player = asPlayer(sender);
+        if (player == null) {
+            return;
+        }
+        if (args.length == 0) {
+            messages.send(player, "plugin.help-callout");
+            return;
+        }
+        games.callOut(player, args[0]);
+    }
+
+    /** Answer a Wild +4 aimed at you: challenge the bluff, or just take the four. */
+    private void respondToDraw4(CommandSender sender, boolean challenge) {
+        Player player = asPlayer(sender);
+        if (player != null) {
+            games.respondToDraw4(player, challenge);
         }
     }
 
@@ -613,6 +649,14 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
                 }
                 case "gamble", "bet", "letitride" -> {
                     return prefixed(BetManager.subcommands(), args[1]);
+                }
+                case "callout" -> {
+                    // Only the people actually in your hand can be called out, so offering
+                    // the whole server would be noise that never completes to anything valid.
+                    if (!(sender instanceof Player p)) {
+                        return List.of();
+                    }
+                    return prefixed(games.opponentNames(p.getUniqueId()), args[1]);
                 }
                 case "tp" -> {
                     if (!sender.hasPermission("uno.admin")) {

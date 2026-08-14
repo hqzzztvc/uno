@@ -42,6 +42,62 @@ game:
   # Seconds of warning before that happens. 0 = no warning.
   turn-warning-seconds: 10
 
+# ---- House rules ----
+#
+#  UNO has no single agreed rulebook -- almost every table plays some variant, and the
+#  popular ones change the game enough that they cannot all be on at once. So they are
+#  toggles, and EVERY ONE IS OFF BY DEFAULT: upgrading the plugin never changes the game
+#  your players are already used to.
+#
+#  These are read when a hand is DEALT, so /uno reload takes effect on the next hand
+#  rather than mid-game.
+rules:
+
+  # Answer a +2 with your own +2 instead of drawing. The penalty piles up and lands on
+  # the first player who can't (or won't) add to it.
+  stacking:
+    enabled: false
+    # May a Wild +4 be stacked on top of a +2?
+    draw4-on-draw2: true
+    # May a plain +2 be stacked on top of a Wild +4? The stricter tables say no.
+    draw2-on-draw4: false
+
+  # Lay several cards of the SAME rank in one turn -- all your 7s, or two Skips at once.
+  # Every card still takes effect: two Skips skip two players, two +2s are four cards.
+  multi-play:
+    enabled: false
+    # Most cards one turn may lay. 0 = no limit.
+    max-cards: 0
+
+  # Holding the EXACT card that's showing (same colour and same rank) lets you play it
+  # out of turn, and play jumps to you. Left-click it in your fan as you normally would.
+  jump-in: false
+
+  # A 7 swaps your hand with a player you pick; a 0 moves every hand one seat around
+  # in the direction of play.
+  seven-o: false
+
+  # Instead of drawing one card and passing, keep drawing until something is playable
+  # -- and keep the turn, so you can play it.
+  draw-to-match: false
+
+  # The official challenge rule. A Wild +4 is only legal if its player had nothing
+  # matching the colour that was showing. Challenge a bluff and they draw 4 instead of
+  # you; challenge an honest one and you draw 6.
+  challenge-draw4: false
+
+  # Players call their own UNO instead of the plugin doing it for them, and anyone who
+  # spots a player sitting on one card without calling can catch them out.
+  uno-callout:
+    enabled: false
+    # How long the window stays open once someone reaches one card.
+    window-seconds: 5
+    # Cards drawn by a player who is caught not having called.
+    penalty: 2
+    # Cards drawn for calling somebody out who was actually safe. Without this, calling
+    # out every player on every turn would be free.
+    false-callout-penalty: 2
+
 # ---- Tables ----
 #
 #  A table is a 3x3 top with a stair pulled up to each side. They are REAL BLOCKS, set
