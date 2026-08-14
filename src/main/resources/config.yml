@@ -44,21 +44,19 @@ game:
 
 # ---- Tables ----
 #
-#  Four variants of the same table: a 3x3 chequered top of logs with a stair pulled up to
-#  each side. They are REAL BLOCKS, set into the world -- not display entities -- so they
-#  save with the chunk and cost nothing to render. Build one with /uno createtable <theme>
-#  and it appears on the ground in front of you; players sit with /uno join.
+#  A table is a 3x3 top with a stair pulled up to each side. They are REAL BLOCKS, set
+#  into the world -- not display entities -- so they save with the chunk and cost nothing
+#  to render.
+#
+#  Hand one out with /uno give casual <theme>, then right-click the ground with it to
+#  build it. Players sit with /uno join.
 #
 #  Every table has four stairs, so max-players cannot go above 4.
 #
-#  blocks.* retextures a variant without touching the plugin. Any block name works:
-#    top-primary    the corners and centre of the top
-#    top-secondary  the four edge tiles
-#    frame          unused by the single-layer top; kept so /uno remove still recognises a
-#                   block an older config put there
-#    seat           the stair players sit on (a stairs block, so it gets a backrest)
-#  Leave a key out to keep the built-in default shown below. A name that isn't a block is
-#  logged and ignored.
+#  Which blocks a table is made of is NOT set here. Each look is a "theme" in
+#  plugins/UNO/themes.yml: a 3x3 grid plus a block for each of the four seats, so a
+#  server can design its own without a plugin rebuild. Build one in game with
+#  /uno theme create <id>, or write it by hand -- that file documents its own format.
 tables:
   # Most tables allowed in a single world. 0 = unlimited.
   max-per-world: 0
@@ -66,45 +64,10 @@ tables:
   # How close (in blocks) you must stand to a table for /uno join to seat you.
   join-radius: 4.0
 
-  # All pink — stripped cherry keeps its colour on the sides as well as the rings.
-  cherry:
-    min-players: 2
-    max-players: 4
-    blocks:
-      top-primary: STRIPPED_CHERRY_LOG
-      top-secondary: STRIPPED_PALE_OAK_LOG
-      frame: STRIPPED_CHERRY_LOG
-      seat: CHERRY_STAIRS
-
-  # Pink rings, dark sides — unstripped cherry bark is what makes the dark frame.
-  darkcherry:
-    min-players: 2
-    max-players: 4
-    blocks:
-      top-primary: CHERRY_LOG
-      top-secondary: PALE_OAK_LOG
-      frame: CHERRY_LOG
-      seat: PALE_OAK_STAIRS
-
-  # The dark pair — unstripped spruce and oak, dark oak seats.
-  spruce:
-    min-players: 2
-    max-players: 4
-    blocks:
-      top-primary: SPRUCE_LOG
-      top-secondary: OAK_LOG
-      frame: SPRUCE_LOG
-      seat: DARK_OAK_STAIRS
-
-  # The same two woods stripped — spruce on the corners and centre, oak on the edges.
-  strippedoak:
-    min-players: 2
-    max-players: 4
-    blocks:
-      top-primary: STRIPPED_SPRUCE_LOG
-      top-secondary: STRIPPED_OAK_LOG
-      frame: STRIPPED_SPRUCE_LOG
-      seat: SPRUCE_STAIRS
+  # Seats a hand needs and allows. A table has four stairs, so 4 is the ceiling
+  # whatever you put here.
+  min-players: 2
+  max-players: 4
 
 # ---- Gambling ("Let It Ride") ----
 #

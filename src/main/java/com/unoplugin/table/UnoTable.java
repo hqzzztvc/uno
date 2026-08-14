@@ -1,7 +1,6 @@
 package com.unoplugin.table;
 
 import org.bukkit.Location;
-import org.bukkit.Material;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -11,84 +10,46 @@ import java.util.UUID;
 /**
  * A placed UNO table.
  *
- * <p>Holds the logical/persisted state (id, variant, anchor, facing) and computes seat
+ * <p>Holds the logical/persisted state (id, kind, theme, anchor, facing) and computes seat
  * positions from simple table-space math. The blocks it is built from are set into the
- * world by {@link TableManager}.
+ * world by {@link TableManager}, from the {@link TableTheme} named here.
  *
- * <p>All four variants are the same shape — a 3×3 block top with a stair pulled up to the
- * middle of each side — and differ only in their block palette, so there is one concrete
- * class and the palette lives in {@link Type}. Adding a fifth variant is one enum constant.
+ * <p>Every table is the same shape — a 3×3 block top with a stair pulled up to the middle of
+ * each side — and differs only in the blocks it is made of. Those used to be four materials
+ * on an enum constant, which meant a new look needed a new build; they are now a theme id
+ * resolved against {@link ThemeStore}, so a server writes its own.
  */
 public class UnoTable {
 
     /**
-     * The four table variants. Each is a block palette over the shared 3×3-plus-four-stairs
-     * shape; {@code alias} is what players type after {@code /uno createtable}.
+     * What a table is FOR, as opposed to what it looks like.
      *
-     * <p>The materials here are only the DEFAULTS — {@code tables.<alias>.blocks.*} in
-     * config.yml overrides any of them, so a server can retheme a table without a rebuild
-     * (see {@link com.unoplugin.util.Settings#tableBlocks}).
+     * <p>Orthogonal to the theme on purpose: a casino table should be able to wear any theme a
+     * casual one can. Only {@link #CASUAL} is implemented — {@link #CASINO} is accepted by the
+     * command grammar and refused, so the syntax players learn now is the final one.
      */
-    public enum Type {
-        /** All-pink: stripped cherry keeps its colour on the sides as well as the rings. */
-        CHERRY("cherry", "Cherry Table",
-                Material.STRIPPED_CHERRY_LOG, Material.STRIPPED_PALE_OAK_LOG,
-                Material.STRIPPED_CHERRY_LOG, Material.CHERRY_STAIRS),
-        /** Pink rings, dark sides — unstripped cherry bark is the dark frame. */
-        DARK_CHERRY("darkcherry", "Dark Cherry Table",
-                Material.CHERRY_LOG, Material.PALE_OAK_LOG,
-                Material.CHERRY_LOG, Material.PALE_OAK_STAIRS),
-        /** The dark pair: unstripped spruce and oak, dark oak seats. */
-        SPRUCE("spruce", "Spruce Table",
-                Material.SPRUCE_LOG, Material.OAK_LOG,
-                Material.SPRUCE_LOG, Material.DARK_OAK_STAIRS),
-        /** The same two woods stripped — spruce on the corners and centre, oak on the edges. */
-        STRIPPED_OAK("strippedoak", "Stripped Oak Table",
-                Material.STRIPPED_SPRUCE_LOG, Material.STRIPPED_OAK_LOG,
-                Material.STRIPPED_SPRUCE_LOG, Material.SPRUCE_STAIRS);
+    public enum Kind {
+        CASUAL("casual"),
+        CASINO("casino");
 
-        private final String alias;
-        private final String displayName;
-        private final Material topPrimary;
-        private final Material topSecondary;
-        private final Material frame;
-        private final Material seat;
+        private final String key;
 
-        Type(String alias, String displayName,
-             Material topPrimary, Material topSecondary, Material frame, Material seat) {
-            this.alias = alias;
-            this.displayName = displayName;
-            this.topPrimary = topPrimary;
-            this.topSecondary = topSecondary;
-            this.frame = frame;
-            this.seat = seat;
+        Kind(String key) {
+            this.key = key;
         }
 
-        public String alias() { return alias; }
+        public String key() {
+            return key;
+        }
 
-        public String displayName() { return displayName; }
-
-        /** Chequer colour on the corners and the centre of the 3×3 top. */
-        public Material topPrimary() { return topPrimary; }
-
-        /** Chequer colour on the four edge tiles of the 3×3 top. */
-        public Material topSecondary() { return topSecondary; }
-
-        /** Legacy body colour; unused by the single-layer top, kept so removal still knows it. */
-        public Material frame() { return frame; }
-
-        /** The stair block players sit on. */
-        public Material seat() { return seat; }
-
-        /** Resolve a player-typed name ({@code blossom}, {@code MIDNIGHT}) to a variant. */
-        public static Type byAlias(String raw) {
+        public static Kind byKey(String raw) {
             if (raw == null) {
                 return null;
             }
             String needle = raw.toLowerCase(Locale.ROOT);
-            for (Type t : values()) {
-                if (t.alias.equals(needle) || t.name().toLowerCase(Locale.ROOT).equals(needle)) {
-                    return t;
+            for (Kind k : values()) {
+                if (k.key.equals(needle)) {
+                    return k;
                 }
             }
             return null;
@@ -109,7 +70,15 @@ public class UnoTable {
     private static final double SEAT_REACH = 2.0;
 
     private final UUID id;
-    private final Type variant;
+    private final Kind kind;
+    /**
+     * Which theme this table wears, by id.
+     *
+     * <p>An id rather than the resolved {@link TableTheme}, because themes.yml is re-read on
+     * {@code /uno reload} and an edited theme has to reach the tables already standing. Held
+     * by value, a retheme would only show on tables placed afterwards.
+     */
+    private final String themeId;
     /** Table centre: clicked-block top, +0.5 on X/Z. Surfaces and seats derive from this. */
     protected final Location anchor;
     /** Facing, snapped to the nearest 90 degrees. */
@@ -133,9 +102,11 @@ public class UnoTable {
     private final List<UUID> entityIds = new ArrayList<>();
     private boolean spawned = false;
 
-    public UnoTable(UUID id, Type variant, Location anchor, float yaw, int minPlayers, int maxPlayers) {
+    public UnoTable(UUID id, Kind kind, String themeId, Location anchor, float yaw,
+                    int minPlayers, int maxPlayers) {
         this.id = id;
-        this.variant = variant;
+        this.kind = kind;
+        this.themeId = themeId;
         this.anchor = anchor;
         this.yaw = yaw;
         this.worldName = anchor.getWorld() == null ? null : anchor.getWorld().getName();
@@ -145,7 +116,10 @@ public class UnoTable {
         this.occupants = new UUID[seats.size()];
     }
 
-    public Type type() { return variant; }
+    public Kind kind() { return kind; }
+
+    /** The id of the theme this table wears — resolved against {@link ThemeStore} on demand. */
+    public String themeId() { return themeId; }
 
     public int minPlayers() {
         return Math.min(minPlayers, seatCount());
@@ -160,7 +134,8 @@ public class UnoTable {
      * One stair pulled up to the middle of each of the four sides, each facing the centre.
      *
      * <p>Seat order is near, far, left, right in table space, so seat 0 is the side the
-     * placer was standing on.
+     * placer was standing on. That order is the same one {@link TableTheme.Seat} declares,
+     * and the two are indexed against each other when a table is built — keep them in step.
      */
     private void computeSeats() {
         seats.add(seatAt(-SEAT_REACH, 0.0));

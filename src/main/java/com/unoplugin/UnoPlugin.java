@@ -7,6 +7,7 @@ import com.unoplugin.debug.CardTester;
 import com.unoplugin.game.GameManager;
 import com.unoplugin.hand.HandManager;
 import com.unoplugin.table.TableManager;
+import com.unoplugin.table.ThemeEditor;
 import com.unoplugin.util.Fx;
 import com.unoplugin.util.Messages;
 import com.unoplugin.util.NameCache;
@@ -32,6 +33,7 @@ public final class UnoPlugin extends JavaPlugin {
     private Fx fx;
     private NameCache names;
     private TableManager tableManager;
+    private ThemeEditor themeEditor;
     private CardTester cardTester;
     private HandManager handManager;
     private GameManager gameManager;
@@ -52,6 +54,10 @@ public final class UnoPlugin extends JavaPlugin {
         tableManager = new TableManager(this, messages, settings, fx);
         events.registerEvents(tableManager, this);
         tableManager.load();
+
+        themeEditor = new ThemeEditor(this, messages, tableManager.themes(),
+                tableManager.customBlocks());
+        events.registerEvents(themeEditor, this);
 
         cardTester = new CardTester(this);
 
@@ -76,7 +82,7 @@ public final class UnoPlugin extends JavaPlugin {
         events.registerEvents(new ResourcePackSender(this, settings), this);
 
         registerCommand("uno", new UnoCommand(this, messages, settings, tableManager,
-                gameManager, betManager, handManager, cardTester));
+                gameManager, betManager, handManager, cardTester, themeEditor));
         registerCommand("gamble", new GambleCommand(betManager, messages));
 
         getLogger().info("UNO v" + getPluginMeta().getVersion() + " enabled.");
@@ -108,6 +114,9 @@ public final class UnoPlugin extends JavaPlugin {
         }
         if (cardTester != null) {
             cardTester.shutdown();
+        }
+        if (themeEditor != null) {
+            themeEditor.shutdown();
         }
         if (tableManager != null) {
             tableManager.save();

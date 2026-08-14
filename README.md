@@ -39,8 +39,9 @@ client-side resource pack.
 Build a table, sit down, deal:
 
 ```
-/uno createtable <theme>   # admin — builds a table on the ground in front of you
-                       # cherry | darkcherry | spruce | strippedoak
+/uno give casual <theme>   # admin — hands you a placeable table item
+                           # right-click the ground with it to build the table
+                           # cherry | darkcherry | spruce | strippedoak, or your own
 /uno join              # stand next to a table and take the nearest free seat
 /uno leave             # get up (Shift does the same)
 /uno quit              # drop out of the hand you're in — others play on
@@ -122,6 +123,57 @@ The rules that give the mode its teeth:
 - Bots never collect. A bot win is a push and everyone is refunded.
 - UNO's own cards and table items can't be put in a pot.
 
+## Table themes
+
+What a table is made of is **data**, not code. Every look is a "theme" in
+`plugins/UNO/themes.yml`: a 3×3 grid of blocks for the top, plus a block for each of the four
+seats. The four that ship (`cherry`, `darkcherry`, `spruce`, `strippedoak`) are written into that
+file on first run and are not special — edit them, or add your own.
+
+Build one in game rather than by hand:
+
+```
+/uno theme create marble    # opens a 3×3 grid with a seat slot on each side
+                            # drop blocks in, hit Save
+/uno give casual marble     # hand out a table wearing it
+```
+
+Blocks placed in the editor are always given back when it closes — designing a theme costs
+nothing.
+
+Written by hand, a theme looks like this:
+
+```yaml
+themes:
+  marble:
+    name: Marble Table
+    # First row is the FAR side of the table, first column is the LEFT.
+    # The pattern turns to match the way the table is placed.
+    grid:
+      - ["minecraft:quartz_block", "minecraft:quartz_pillar[axis=y]", "minecraft:quartz_block"]
+      - ["minecraft:quartz_pillar[axis=y]", "minecraft:sea_lantern", "minecraft:quartz_pillar[axis=y]"]
+      - ["minecraft:quartz_block", "minecraft:quartz_pillar[axis=y]", "minecraft:quartz_block"]
+    seats:
+      near: "minecraft:quartz_stairs"
+      far: "minecraft:quartz_stairs"
+      left: "minecraft:quartz_stairs"
+      right: "minecraft:quartz_stairs"
+```
+
+### Custom blocks
+
+A theme may name a block from **ItemsAdder, Oraxen or Nexo**, with a vanilla block after a pipe
+for servers that don't run that plugin:
+
+```yaml
+      - ["itemsadder:marble_pillar|minecraft:quartz_pillar", "nexo:felt|minecraft:green_wool", ...]
+```
+
+Those plugins are soft dependencies read reflectively, so UNO builds and runs identically without
+any of them installed. **Always give a custom id a fallback** — without one, a server missing that
+plugin gets a plain default block in that cell.
+
+
 ## Commands
 
 All subcommands tab-complete; admin ones are hidden from players who can't use them.
@@ -136,7 +188,8 @@ All subcommands tab-complete; admin ones are hidden from players who can't use t
 | `/uno stop` | `uno.play` | End the hand at your table (refused while a pot is riding) |
 | `/uno version` | `uno.play` | Plugin version |
 | `/gamble …` | `uno.gamble` | Wagering — see above (aliases: `/bet`, `/ante`, `/letitride`) |
-| `/uno createtable <theme>` | `uno.admin` | Build a table in front of you (cherry, darkcherry, spruce, strippedoak) |
+| `/uno give <casual\|casino> <theme>` | `uno.admin` | A placeable table item; right-click the ground with it. Casino is not implemented yet |
+| `/uno theme <list\|create\|edit\|delete> [id]` | `uno.admin` | Design the blocks a table is built from, in a 3×3 GUI |
 | `/uno remove` | `uno.admin` | Remove the nearest table within 5 blocks (refused mid-hand) |
 | `/uno list` | `uno.admin` | Every placed table: id, world, coordinates, occupancy |
 | `/uno info` | `uno.admin` | Running hands and open pots |

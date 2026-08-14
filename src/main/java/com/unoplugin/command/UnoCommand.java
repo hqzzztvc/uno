@@ -7,6 +7,8 @@ import com.unoplugin.debug.CardTester;
 import com.unoplugin.game.GameManager;
 import com.unoplugin.hand.HandManager;
 import com.unoplugin.table.TableManager;
+import com.unoplugin.table.TableTheme;
+import com.unoplugin.table.ThemeEditor;
 import com.unoplugin.table.UnoTable;
 import com.unoplugin.util.Messages;
 import com.unoplugin.util.Settings;
@@ -39,9 +41,12 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
     private static final List<String> PUBLIC_SUBS = List.of(
             "help", "version", "join", "leave", "start", "quit", "stop", "gamble");
     private static final List<String> ADMIN_SUBS = List.of(
-            "createtable", "remove", "list", "info", "tp", "end", "refund", "reload", "play");
+            "give", "theme", "remove", "list", "info", "tp", "end", "refund", "reload", "play");
     private static final List<String> DEBUG_SUBS = List.of(
             "fan", "fanclear", "testcards", "hand", "cleartest");
+
+    /** {@code /uno theme ...} verbs. */
+    private static final List<String> THEME_SUBS = List.of("list", "create", "edit", "delete");
 
     private final UnoPlugin plugin;
     private final Messages messages;
@@ -51,9 +56,11 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
     private final BetManager bets;
     private final HandManager hands;
     private final CardTester tester;
+    private final ThemeEditor themeEditor;
 
     public UnoCommand(UnoPlugin plugin, Messages messages, Settings settings, TableManager tables,
-                      GameManager games, BetManager bets, HandManager hands, CardTester tester) {
+                      GameManager games, BetManager bets, HandManager hands, CardTester tester,
+                      ThemeEditor themeEditor) {
         this.plugin = plugin;
         this.messages = messages;
         this.settings = settings;
@@ -62,12 +69,16 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         this.bets = bets;
         this.hands = hands;
         this.tester = tester;
+        this.themeEditor = themeEditor;
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (args.length == 0) {
+            // Bare /uno is the help listing. A one-line banner told a player the plugin was
+            // there and nothing about how to use it, which is the one thing they needed.
             messages.send(sender, "plugin.header", "version", plugin.getPluginMeta().getVersion());
+            help(sender);
             return true;
         }
         String[] rest = Arrays.copyOfRange(args, 1, args.length);
@@ -83,7 +94,8 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
             case "gamble", "bet", "letitride" -> gamble(sender, rest);
 
             case "reload" -> reload(sender);
-            case "createtable", "create" -> createTable(sender, rest);
+            case "give" -> give(sender, rest);
+            case "theme" -> theme(sender, rest);
             case "remove" -> remove(sender);
             case "list" -> list(sender);
             case "info" -> info(sender);
@@ -118,9 +130,9 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
             return;
         }
         messages.send(sender, "plugin.help-admin-header");
-        for (String key : new String[]{"plugin.help-createtable", "plugin.help-remove", "plugin.help-list",
-                "plugin.help-info", "plugin.help-tp", "plugin.help-end", "plugin.help-refund",
-                "plugin.help-reload"}) {
+        for (String key : new String[]{"plugin.help-give", "plugin.help-theme", "plugin.help-remove",
+                "plugin.help-list", "plugin.help-info", "plugin.help-tp", "plugin.help-end",
+                "plugin.help-refund", "plugin.help-reload"}) {
             messages.send(sender, key);
         }
     }
@@ -197,11 +209,18 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         }
         settings.reload();
         messages.reload();
+        tables.reloadThemes();
         messages.send(sender, "plugin.reloaded");
     }
 
-    /** Build a table on the ground in front of the caller. */
-    private void createTable(CommandSender sender, String[] args) {
+    /**
+     * {@code /uno give <casual|casino> <theme>} — hand over a placeable table item.
+     *
+     * <p>The kind comes first and the theme second because they are different questions: what
+     * the table is FOR, then what it looks like. Casino is part of the grammar today and
+     * refused at the point of use, so the syntax players learn now is the one that stays.
+     */
+    private void give(CommandSender sender, String[] args) {
         if (notAdmin(sender)) {
             return;
         }
@@ -210,15 +229,72 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
             return;
         }
         if (args.length < 1) {
-            messages.send(player, "table.pick-variant", "variants", variantList());
+            messages.send(player, "table.pick-kind", "kinds", kindList());
             return;
         }
-        UnoTable.Type type = parseType(args[0]);
-        if (type == null) {
-            messages.send(player, "table.unknown-type", "variants", variantList());
+        UnoTable.Kind kind = UnoTable.Kind.byKey(args[0]);
+        if (kind == null) {
+            messages.send(player, "table.unknown-kind", "kinds", kindList());
             return;
         }
-        tables.createTableCommand(player, type);
+        if (kind == UnoTable.Kind.CASINO) {
+            messages.send(player, "table.casino-unimplemented");
+            return;
+        }
+        if (args.length < 2) {
+            messages.send(player, "table.pick-variant", "variants", tables.themes().idList());
+            return;
+        }
+        TableTheme theme = tables.themes().get(args[1]);
+        if (theme == null) {
+            messages.send(player, "table.unknown-type", "variants", tables.themes().idList());
+            return;
+        }
+        tables.giveTableItem(player, kind, theme);
+        messages.send(player, "table.given", "variant", theme.displayName());
+    }
+
+    /** {@code /uno theme <list|create|edit|delete>} — manage the themes tables are built from. */
+    private void theme(CommandSender sender, String[] args) {
+        if (notAdmin(sender)) {
+            return;
+        }
+        if (args.length == 0) {
+            messages.send(sender, "plugin.help-theme");
+            return;
+        }
+        switch (args[0].toLowerCase(Locale.ROOT)) {
+            case "list" -> {
+                messages.send(sender, "theme.list-header", "count", tables.themes().all().size());
+                for (TableTheme t : tables.themes().all()) {
+                    messages.send(sender, "theme.list-entry", "id", t.id(), "name", t.displayName(),
+                            "kind", t.builtIn() ? "built-in" : "custom");
+                }
+            }
+            case "create", "edit" -> {
+                Player player = asPlayer(sender);
+                if (player == null) {
+                    return;
+                }
+                if (args.length < 2) {
+                    messages.send(sender, "theme.need-id");
+                    return;
+                }
+                themeEditor.open(player, args[1]);
+            }
+            case "delete" -> {
+                if (args.length < 2) {
+                    messages.send(sender, "theme.need-id");
+                    return;
+                }
+                if (tables.themes().delete(args[1])) {
+                    messages.send(sender, "theme.deleted", "theme", args[1]);
+                } else {
+                    messages.send(sender, "theme.undeletable", "theme", args[1]);
+                }
+            }
+            default -> messages.send(sender, "plugin.help-theme");
+        }
     }
 
     /** Removing a table with a hand or a pot running on it would strand both. */
@@ -468,23 +544,19 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         }
     }
 
-    private UnoTable.Type parseType(String raw) {
-        return UnoTable.Type.byAlias(raw);
-    }
-
-    /** Every variant alias, for the "which one?" and "no such one" messages. */
-    private static String variantList() {
+    /** Every table kind, for the "which one?" and "no such one" messages. */
+    private static String kindList() {
         List<String> out = new ArrayList<>();
-        for (UnoTable.Type t : UnoTable.Type.values()) {
-            out.add(t.alias());
+        for (UnoTable.Kind k : UnoTable.Kind.values()) {
+            out.add(k.key());
         }
         return String.join(", ", out);
     }
 
-    private static List<String> variantAliases() {
+    private static List<String> kindKeys() {
         List<String> out = new ArrayList<>();
-        for (UnoTable.Type t : UnoTable.Type.values()) {
-            out.add(t.alias());
+        for (UnoTable.Kind k : UnoTable.Kind.values()) {
+            out.add(k.key());
         }
         return out;
     }
@@ -527,11 +599,17 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         }
         if (args.length == 2) {
             switch (args[0].toLowerCase(Locale.ROOT)) {
-                case "createtable", "create" -> {
+                case "give" -> {
                     if (!sender.hasPermission("uno.admin")) {
                         return List.of();
                     }
-                    return prefixed(variantAliases(), args[1]);
+                    return prefixed(kindKeys(), args[1]);
+                }
+                case "theme" -> {
+                    if (!sender.hasPermission("uno.admin")) {
+                        return List.of();
+                    }
+                    return prefixed(THEME_SUBS, args[1]);
                 }
                 case "gamble", "bet", "letitride" -> {
                     return prefixed(BetManager.subcommands(), args[1]);
@@ -560,6 +638,17 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
                 default -> {
                     return List.of();
                 }
+            }
+        }
+        if (args.length == 3 && sender.hasPermission("uno.admin")) {
+            String sub = args[0].toLowerCase(Locale.ROOT);
+            // The theme name is the third word of both /uno give <kind> <theme> and
+            // /uno theme edit|delete <theme>.
+            boolean wantsTheme = sub.equals("give")
+                    || (sub.equals("theme") && (args[1].equalsIgnoreCase("edit")
+                            || args[1].equalsIgnoreCase("delete")));
+            if (wantsTheme) {
+                return prefixed(tables.themes().ids(), args[2]);
             }
         }
         return List.of();

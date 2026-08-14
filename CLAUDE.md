@@ -212,7 +212,7 @@ All visuals are `ItemDisplay` / `BlockDisplay` / `TextDisplay` entities spawned 
 the chunk; `TableManager` respawns them on `ChunkLoadEvent` and clears `entityIds` on unload. Only
 logical state is persisted:
 
-- `plugins/UNO/tables.yml` — table id, type, world, x/y/z, yaw. A table whose world isn't loaded
+- `plugins/UNO/tables.yml` — table id, kind, theme id, world, x/y/z, yaw. A table whose world isn't loaded
   when the plugin enables (the Multiverse case) is held in `TableManager.pending` and **written back
   verbatim on save**, then built if `WorldLoadEvent` brings its world up. Dropping it from the map
   instead means the next `save()` erases it from disk forever.
@@ -246,49 +246,97 @@ vanish every five plays is the bug that shape was hiding.
 
 ### Tables
 
-There are **four variants of one table**, not four table shapes: a 3×3 chequered top with a stair
-pulled up to the middle of each side, differing only in their block palette. That is why `UnoTable`
-is a single concrete class and the palette lives in `UnoTable.Type` — adding a fifth is one enum
-constant. `Type.byAlias` is what turns `/uno createtable cherry` into a variant.
+A table's **looks are data, not code**. There is one shape — a 3×3 top with a stair pulled up to
+the middle of each side — and a `TableTheme` says which block goes in each of the nine cells and
+each of the four seats. `ThemeStore` loads them from `plugins/UNO/themes.yml`, which is also
+written back by the in-game editor. The four themes that used to be `UnoTable.Type` constants are
+seeded into that file on first run and are **not special-cased anywhere** — they carry a
+`built-in` flag only so `/uno theme delete` refuses to leave a server with no themes.
+
+`UnoTable` now carries a **theme id string plus a `Kind`** (`CASUAL` / `CASINO`), not a variant
+enum. Kind is orthogonal to theme on purpose: a casino table should be able to wear any theme a
+casual one can. Only `CASUAL` is implemented; `CASINO` is accepted by the command grammar and
+refused at the point of use, so the syntax players learn now is the final one. The theme is held
+**by id, not by resolved theme**, because `themes.yml` is re-read on `/uno reload` and an edited
+theme has to reach the tables already standing.
 
 - **The table is REAL BLOCKS set into the world, not display entities.** `TableManager.buildBlocks`
-  lays nine logs (`Orientable` axis Y, so the rings face up) and four stairs. This is the whole
-  reason the chunk-index machinery is gone: a display is an extra entity every nearby player has to
-  track, it renders at whatever scale it was given rather than as a block, and it dies with its
-  chunk so the plugin has to babysit `ChunkLoadEvent`/`ChunkUnloadEvent` to put it back. Real blocks
-  save with the chunk, cost nothing to render, and light and occlude correctly. **Don't put the
-  table back on `BlockDisplay`.**
-- Because the top is one layer of whole blocks, a variant's sides are whatever bark the log has.
-  That is the whole difference between `cherry` and `darkcherry`: **stripped** cherry is pink on
-  every face, **unstripped** cherry keeps pink rings on top with dark bark down the sides. The dark
-  frame in the original mock-up was that bark, not a separate block — don't reach for blackstone or
-  crimson to reproduce it. `frame` survives in the palette only so `/uno remove` still recognises a
-  block an older config put down.
-- Variants are named after their wood, not a mood, so `/uno createtable <theme>` tells you what you
-  are going to get. `TableManager.LEGACY_TYPES` maps every name a previous build wrote
-  (`CASINO`, `BLOSSOM`, `MIDNIGHT`, `TAVERN`, `HOMESTEAD`) onto the current ones.
-- The top is **never rotated**. A 3×3 is symmetric under the 90° steps `snap()` allows, so a rotation
-  would be a no-op that only risks putting the tiles off the block grid. Only the seats care about
-  facing.
+  lays nine top blocks and four stairs. This is the whole reason the chunk-index machinery is gone:
+  a display is an extra entity every nearby player has to track, it renders at whatever scale it
+  was given rather than as a block, and it dies with its chunk so the plugin has to babysit
+  `ChunkLoadEvent`/`ChunkUnloadEvent` to put it back. Real blocks save with the chunk, cost nothing
+  to render, and light and occlude correctly. **Don't put the table back on `BlockDisplay`.**
+- **The top IS rotated now, and that is a deliberate reversal.** It used to be world-aligned on the
+  grounds that a 3×3 chequer is symmetric under 90° steps, so rotating was a no-op. Author-drawn
+  themes are not symmetric, and a pattern someone designed has to come out the same way round
+  however the table is placed. `cellLocation` maps table space (row 0 = far, col 0 = left) through
+  the snapped yaw; a 90° step permutes the nine positions exactly, so nothing lands off the grid.
+  `footprint()` deliberately does **not** rotate — a square maps onto itself, so "is this block
+  ours?" needs no theme and stays cheap.
+- Because the top is one layer of whole blocks, a theme's sides are whatever the block's own sides
+  look like. That is the whole difference between `cherry` and `darkcherry`: **stripped** cherry is
+  pink on every face, **unstripped** cherry keeps pink rings on top with dark bark down the sides.
+  The dark frame in the original mock-up was that bark, not a separate block.
+- A log laid flat shows bark on its top face, so `buildBlocks` stands `Orientable` blocks on end
+  (`ringsUp`). A theme can still override that by writing the axis into its block state.
 - Stairs carry their full-height side on the face they *face*, so a seat faces **outward** — that
-  puts the tall half behind the sitter as a backrest with the low step toward the table.
-- Palettes are overridable per variant under `tables.<alias>.blocks.*`; a name that isn't a block is
-  logged and the enum default stands, because returning null there surfaces as an NPE inside the
-  chunk-load handler that rebuilds every table in range.
-- `tables.yml` rows written by the old build say `type: CASINO`. `TableManager.migrateType` rewrites
-  those to `BLOSSOM` on load. Rejecting them instead strands them in `pending` and leaves a dead
-  entry on disk that no command can reach.
-- `register()` re-lays a table's blocks **only if they are missing** (it checks the anchor block).
-  That one block read is what makes the entity→block migration and a bulldozed table both
-  self-healing, and it is why a normal restart rebuilds nothing.
-- **There is no placeable table item.** `/uno createtable <theme>` builds one `BUILD_DISTANCE` (4)
-  blocks in front of the caller, on whatever ground `groundInFront` finds within `GROUND_SEARCH`.
-  In front, not underfoot: a 3×3 with seats 2 out centred on the player buries them in their own
-  furniture. An item that turns into a table on right-click was a thing you could stack, drop into
-  a chest and lose.
+  puts the tall half behind the sitter as a backrest with the low step toward the table. Anything
+  that isn't `Directional` is left exactly as the theme wrote it.
+- **Block specs, not `Material`.** `BlockSpec` parses `minecraft:cherry_log[axis=y]`, a bare
+  `CHERRY_LOG` (what old configs held), or `itemsadder:marble|minecraft:quartz_block`. The part
+  after the pipe is the fallback, and it is what makes a theme built around a custom-block plugin
+  still placeable on a server that doesn't run one. **Always give custom ids a fallback** — a
+  missing block leaves a hole where the card piles sit.
+- `CustomBlocks` bridges ItemsAdder / Oraxen / Nexo **reflectively**, resolved once at startup.
+  They aren't on any Maven repo this build pulls from, so compiling against them would make the
+  plugin unbuildable for everyone else; and a server running none of them must not pay a
+  `NoClassDefFoundError` at table-building time. Every call is wrapped and every failure degrades
+  to the fallback and logs **once**. This is the least verifiable code in the repo — it can only
+  be exercised with those plugins actually installed.
+- `repairIfNeeded` checks **every cell**, not a sample. Sampling one or two let a retheme through
+  whenever the new theme reused the old material in the sampled spot, and with author-written
+  themes there is no "primary/secondary" pair left to sample. Thirteen block reads only happen on a
+  chunk that actually holds a table; the `byChunk` lookup misses on virtually every chunk first.
+- `clearBlocks` tries `CustomBlocks.removeAt` **before** matching materials: on those plugins the
+  world block is a note block or similar, so matching on `Material` alone would either miss it or
+  clear a real one.
+- `tables.yml` rows written by older builds say `type: CASINO`. Load reads `theme` first and falls
+  back to `type` through `ThemeStore.migrateLegacyId`, and the row is rewritten with a theme id on
+  the next save. Rejecting unknown names instead strands them in `pending` and leaves a dead entry
+  on disk that no command can reach.
+- `register()` re-lays a table's blocks **only if they are missing**. That is what makes the
+  entity→block migration and a bulldozed table both self-healing, and it is why a normal restart
+  rebuilds nothing.
+- **The placeable table item is back**, and it is how tables are made now: `/uno give <kind>
+  <theme>` hands over an item, and right-clicking the ground with it calls `placeAt` on the block
+  above the one clicked. Where they aim, not where they stand — a 3×3 with seats 2 out centred on
+  the placer buries them in their own furniture, and an aimed item is the only way to line a table
+  up with a room already built. The item is an `OAK_PRESSURE_PLATE`, so `onInteract` **must** cancel
+  the event before anything else or a real pressure plate goes down beside the table. Kind and theme
+  live in the item's PDC, so a stack that has been through a chest still builds what it says; a
+  theme deleted since then is caught at placement rather than quietly building something else.
+  `/uno createtable` is **gone**.
 - `onBlockBreak` protects a live table's 13 positions from everyone without `uno.admin`, since the
   blocks are now real and mineable. Admins are deliberately let through — which also means an admin
   testing will mine their own table and see it come back on the next restart.
+
+### Theme editor
+
+`/uno theme create <id>` opens `ThemeEditor`, a 54-slot chest laid out like the table seen from
+above: the 3×3 top in the middle, one seat slot centred on each edge, save and cancel on the
+bottom row.
+
+- It is a **real inventory players drop real blocks into**, not a click-to-cycle picker, and that
+  is the point. A picker has to enumerate its options, so it can only offer what the plugin was
+  compiled knowing about; an inventory takes anything a player can hold, including a custom block.
+- **Blocks are borrowed, never taken.** `returnContents` runs on close *and* on quit, and anything
+  that no longer fits is dropped rather than deleted. Designing a theme must never cost a player a
+  stack.
+- Built-in themes are **not editable in place** — editing one would leave the server no way back to
+  the look it shipped with. Copy it under a new name.
+- `EditorHolder.getInventory()` returns the inventory rather than throwing. Bukkit and other
+  plugins are entitled to call it on any holder they are handed, and a marker that throws turns an
+  unrelated plugin's inventory sweep into a stack trace.
 
 ### Seating
 

@@ -4,7 +4,11 @@ import com.unoplugin.UnoPlugin;
 import com.unoplugin.util.Fx;
 import com.unoplugin.util.Messages;
 import com.unoplugin.util.Settings;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
+import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -22,21 +26,27 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.entity.EntityDismountEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.world.WorldLoadEvent;
+import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.ItemFlag;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -91,28 +101,17 @@ public class TableManager implements Listener {
     private final Map<Long, List<UnoTable>> byChunk = new HashMap<>();
     private final NamespacedKey idKey;       // tags spawned entities with their table id
     private final NamespacedKey vehicleKey;  // tags the invisible seat mount
+    private final NamespacedKey itemKey;     // stamps a table item with kind + theme
     private final File dataFile;
+    private final ThemeStore themes;
+    private final CustomBlocks customBlocks;
 
     private BusyCheck busyCheck = id -> false;
     private StandUpHook standUpHook = p -> false;
 
     /** A table we know about but can't build yet, because its world isn't loaded. */
-    private record PendingTable(String key, String type, String world,
+    private record PendingTable(String key, String kind, String theme, String world,
                                 double x, double y, double z, double yaw) {}
-
-    /**
-     * How far in front of the player {@code /uno createtable} builds, in blocks.
-     *
-     * <p>The table is 3×3 with seats 2 out, so it reaches 2 blocks from its centre. At 4 the
-     * near seat lands just past arm's reach — clear of the player, close enough to walk to.
-     */
-    private static final double BUILD_DISTANCE = 4.0;
-
-    /** How far a table reaches from its centre: the seats, at 2 blocks. */
-    private static final double FOOTPRINT_REACH = 2.0;
-
-    /** How far up or down to look for ground under the build spot before giving up. */
-    private static final int GROUND_SEARCH = 4;
 
     /** Players currently seated, keyed by player id. */
     private final Map<UUID, Seated> seated = new HashMap<>();
@@ -126,7 +125,25 @@ public class TableManager implements Listener {
         this.fx = fx;
         this.idKey = new NamespacedKey(plugin, "uno_table_id");
         this.vehicleKey = new NamespacedKey(plugin, "uno_seat_vehicle");
+        this.itemKey = new NamespacedKey(plugin, "uno_table_item");
         this.dataFile = new File(plugin.getDataFolder(), "tables.yml");
+        this.themes = new ThemeStore(plugin);
+        this.customBlocks = new CustomBlocks(plugin.getLogger());
+    }
+
+    /** The theme registry, for the commands and the editor. */
+    public ThemeStore themes() {
+        return themes;
+    }
+
+    /** The custom-block bridge, so the editor can preview a theme's blocks the same way. */
+    public CustomBlocks customBlocks() {
+        return customBlocks;
+    }
+
+    /** Re-read themes.yml — {@code /uno reload} does this alongside config and messages. */
+    public void reloadThemes() {
+        themes.load();
     }
 
     /** Wire in "is anything using this table right now?" (games and pots). */
@@ -142,6 +159,7 @@ public class TableManager implements Listener {
     // ---------------------------------------------------------------- lifecycle
 
     public void load() {
+        themes.load();
         if (!dataFile.exists()) {
             return;
         }
@@ -156,26 +174,35 @@ public class TableManager implements Listener {
                 continue;
             }
             String worldName = s.getString("world", "");
-            String type = migrateType(s.getString("type", UnoTable.Type.CHERRY.name()));
+            // "theme" is what this build writes; "type" is the old enum name, which maps onto
+            // whichever theme replaced it. Reading both means an older tables.yml still loads.
+            String theme = s.getString("theme");
+            if (theme == null) {
+                theme = migrateType(s.getString("type", "CHERRY"));
+            }
+            String kind = s.getString("kind", UnoTable.Kind.CASUAL.key());
             double x = s.getDouble("x");
             double y = s.getDouble("y");
             double z = s.getDouble("z");
             double yaw = s.getDouble("yaw");
             try {
                 UUID id = UUID.fromString(key);
-                UnoTable.Type parsedType = UnoTable.Type.valueOf(type);
+                UnoTable.Kind parsedKind = UnoTable.Kind.byKey(kind);
+                if (parsedKind == null) {
+                    parsedKind = UnoTable.Kind.CASUAL;
+                }
                 World world = Bukkit.getWorld(worldName);
                 if (world == null) {
                     // Multiverse and friends load worlds AFTER plugins enable. Dropping the
                     // table here would have it erased from disk by the next save().
-                    pending.add(new PendingTable(key, type, worldName, x, y, z, yaw));
+                    pending.add(new PendingTable(key, kind, theme, worldName, x, y, z, yaw));
                     continue;
                 }
-                register(create(parsedType, id, new Location(world, x, y, z), (float) yaw));
+                register(create(parsedKind, theme, id, new Location(world, x, y, z), (float) yaw));
             } catch (IllegalArgumentException ex) {
                 plugin.getLogger().warning("Bad table entry '" + key + "': " + ex.getMessage()
                         + " — keeping it on file untouched.");
-                pending.add(new PendingTable(key, type, worldName, x, y, z, yaw));
+                pending.add(new PendingTable(key, kind, theme, worldName, x, y, z, yaw));
             }
         }
         plugin.getLogger().info("Loaded " + tables.size() + " UNO table(s)."
@@ -191,31 +218,18 @@ public class TableManager implements Listener {
      * position and just picks up the current palette. Rejecting an unknown name instead strands
      * the row in {@code pending} and leaves a dead entry on disk that no command can reach.
      */
-    private static final Map<String, UnoTable.Type> LEGACY_TYPES = Map.of(
-            "CASINO", UnoTable.Type.CHERRY,      // the single pre-variant table
-            "BLOSSOM", UnoTable.Type.CHERRY,     // renamed after the blocks it is made of
-            "MIDNIGHT", UnoTable.Type.DARK_CHERRY,
-            // The oak/spruce pair was mis-built from oak+birch before; both rows move to the
-            // variant that now holds the woods they were meant to have.
-            "TAVERN", UnoTable.Type.SPRUCE,
-            "OAK", UnoTable.Type.SPRUCE,
-            "HOMESTEAD", UnoTable.Type.STRIPPED_OAK,
-            "BIRCH", UnoTable.Type.STRIPPED_OAK);
     /** Set once per load so the migration logs a single line, not one per table. */
     private boolean loggedMigration = false;
 
     private String migrateType(String stored) {
-        UnoTable.Type replacement = stored == null
-                ? null : LEGACY_TYPES.get(stored.toUpperCase(Locale.ROOT));
-        if (replacement == null) {
-            return stored;
-        }
+        String themeId = ThemeStore.migrateLegacyId(stored);
         if (!loggedMigration) {
-            plugin.getLogger().info("tables.yml holds tables under their old names — "
-                    + "loading them under the current ones. Their blocks are re-laid to match.");
+            plugin.getLogger().info("tables.yml holds tables under their old variant names — "
+                    + "loading them under the themes that replaced those. They are rewritten "
+                    + "with a theme id on the next save.");
             loggedMigration = true;
         }
-        return replacement.name();
+        return themeId;
     }
 
     /** A world showed up late — build any tables that were waiting for it. */
@@ -232,7 +246,9 @@ public class TableManager implements Listener {
                 continue;
             }
             try {
-                UnoTable table = create(UnoTable.Type.valueOf(p.type()), UUID.fromString(p.key()),
+                UnoTable.Kind kind = UnoTable.Kind.byKey(p.kind());
+                UnoTable table = create(kind == null ? UnoTable.Kind.CASUAL : kind, p.theme(),
+                        UUID.fromString(p.key()),
                         new Location(event.getWorld(), p.x(), p.y(), p.z()), (float) p.yaw());
                 register(table);
                 it.remove();
@@ -316,21 +332,58 @@ public class TableManager implements Listener {
         if (w == null) {
             return false;
         }
-        Settings.TableBlocks palette = settings.tableBlocks(table.type());
-        Location a = table.anchor();
-        // Sample one cell of each kind, not just the anchor. Testing the anchor against
-        // "either top colour" let a retheme through whenever the new palette happened to
-        // reuse the old material — swapping oak+stripped-oak for spruce+oak left every table
-        // standing, because its old centre block was the new secondary. Each sample is
-        // compared against the exact material that cell must hold.
-        boolean ok = w.getBlockAt(a).getType() == palette.topPrimary()
-                && w.getBlockAt(a.clone().add(1, 0, 0)).getType() == palette.topSecondary()
-                && w.getBlockAt(table.seats().get(0)).getType() == palette.seat();
-        if (ok) {
-            return false;
+        TableTheme theme = themeOf(table);
+        // Every cell, against the exact material that cell must hold. Sampling one or two let
+        // a retheme through whenever the new theme happened to reuse the old material in the
+        // place being sampled — and with author-written themes there is no longer a "primary
+        // and secondary" pair to sample, so the whole grid is the only honest check. Thirteen
+        // block reads on a chunk that actually holds a table is cheap; the map lookup in
+        // onChunkLoad misses on virtually every chunk before it gets here.
+        for (int row = 0; row < TableTheme.SIZE; row++) {
+            for (int col = 0; col < TableTheme.SIZE; col++) {
+                BlockSpec spec = theme.cell(row, col);
+                if (spec.isCustom(customBlocks)) {
+                    continue; // the owning plugin decides what its block looks like in-world
+                }
+                if (w.getBlockAt(cellLocation(table, row, col)).getType()
+                        != spec.material(customBlocks)) {
+                    buildBlocks(table);
+                    return true;
+                }
+            }
         }
-        buildBlocks(table);
-        return true;
+        List<Location> seats = table.seats();
+        for (int i = 0; i < seats.size(); i++) {
+            BlockSpec spec = theme.seat(TableTheme.Seat.values()[i]);
+            if (spec.isCustom(customBlocks)) {
+                continue;
+            }
+            if (w.getBlockAt(seats.get(i)).getType() != spec.material(customBlocks)) {
+                buildBlocks(table);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** This table's theme, or the fallback if the one it names has been deleted from file. */
+    private TableTheme themeOf(UnoTable table) {
+        TableTheme theme = themes.get(table.themeId());
+        return theme != null ? theme : themes.fallback();
+    }
+
+    /** Every material a theme lays down — what {@code /uno remove} is allowed to clear. */
+    private Set<Material> themeMaterials(TableTheme theme) {
+        Set<Material> out = EnumSet.noneOf(Material.class);
+        for (int row = 0; row < TableTheme.SIZE; row++) {
+            for (int col = 0; col < TableTheme.SIZE; col++) {
+                out.add(theme.cell(row, col).material(customBlocks));
+            }
+        }
+        for (TableTheme.Seat seat : TableTheme.Seat.values()) {
+            out.add(theme.seat(seat).material(customBlocks));
+        }
+        return out;
     }
 
     /** Tables whose blocks had to be re-laid this load — logged once, not once per table. */
@@ -341,7 +394,8 @@ public class TableManager implements Listener {
         for (UnoTable t : tables.values()) {
             Location a = t.anchor();
             String base = "tables." + t.id();
-            yml.set(base + ".type", t.type().name());
+            yml.set(base + ".kind", t.kind().key());
+            yml.set(base + ".theme", t.themeId());
             // The captured name, NOT a.getWorld() — that goes null the moment the world is
             // unloaded at runtime, and an NPE here means tables.yml is never written at all.
             yml.set(base + ".world", t.worldName());
@@ -354,7 +408,8 @@ public class TableManager implements Listener {
         // placing one table erases every table in an unloaded world, permanently.
         for (PendingTable p : pending) {
             String base = "tables." + p.key();
-            yml.set(base + ".type", p.type());
+            yml.set(base + ".kind", p.kind());
+            yml.set(base + ".theme", p.theme());
             yml.set(base + ".world", p.world());
             yml.set(base + ".x", p.x());
             yml.set(base + ".y", p.y());
@@ -394,31 +449,33 @@ public class TableManager implements Listener {
         // restart is the whole point of building it out of blocks.
     }
 
-    private UnoTable create(UnoTable.Type type, UUID id, Location anchor, float yaw) {
-        return new UnoTable(id, type, anchor, yaw,
-                settings.tableMinPlayers(type), settings.tableMaxPlayers(type));
+    private UnoTable create(UnoTable.Kind kind, String themeId, UUID id, Location anchor, float yaw) {
+        return new UnoTable(id, kind, TableTheme.normaliseId(themeId), anchor, yaw,
+                settings.tableMinPlayers(), settings.tableMaxPlayers());
     }
 
     // ------------------------------------------------------------ place / remove
 
-    /**
-     * Build a table on the ground in FRONT of the player — the whole of {@code /uno createtable}.
-     *
-     * <p>In front, not underfoot: the table is 3×3 with seats 2 out, so centring it on the
-     * player buries them inside their own furniture and leaves them standing on the felt.
-     * {@link #BUILD_DISTANCE} puts the near seat about where they are looking.
-     */
-    /** The table {@link #createTable} last built, so the caller can light it up. */
+    /** The table {@link #placeAt} last built, so the caller can light it up. */
     private UnoTable lastBuilt;
 
-    public PlaceResult createTable(UnoTable.Type type, Player player) {
-        World w = player.getWorld();
+    /**
+     * Build a table centred on the block ABOVE {@code clicked} — the whole of placing a table
+     * item.
+     *
+     * <p>Where the player clicked, not where they are standing: a 3×3 with seats 2 out centred
+     * on the placer buries them inside their own furniture. An item they aim is also the only
+     * way to line a table up with a room they have already built.
+     */
+    public PlaceResult placeAt(UnoTable.Kind kind, String themeId, Block clicked, Player player) {
+        World w = clicked.getWorld();
         int limit = settings.maxTablesPerWorld();
         if (limit > 0 && countIn(w) >= limit) {
             return PlaceResult.WORLD_LIMIT;
         }
-        Location anchor = groundInFront(player);
-        if (anchor == null) {
+        Location anchor = new Location(w, clicked.getX() + 0.5, clicked.getY() + 1.0,
+                clicked.getZ() + 0.5);
+        if (anchor.getBlockY() < w.getMinHeight() + 1 || anchor.getBlockY() > w.getMaxHeight() - 2) {
             return PlaceResult.NO_ROOM;
         }
         for (UnoTable other : tables.values()) {
@@ -429,8 +486,10 @@ public class TableManager implements Listener {
                 return PlaceResult.TOO_CLOSE;
             }
         }
+        // Snapped to the player's facing, so the theme's pattern and the seats line up with
+        // the way they were standing when they placed it.
         float yaw = snap(player.getLocation().getYaw());
-        UnoTable table = create(type, UUID.randomUUID(), anchor, yaw);
+        UnoTable table = create(kind, themeId, UUID.randomUUID(), anchor, yaw);
         if (!footprintClear(table)) {
             return PlaceResult.NO_ROOM;
         }
@@ -440,42 +499,6 @@ public class TableManager implements Listener {
         lastBuilt = table;
         save();
         return PlaceResult.OK;
-    }
-
-    /**
-     * The block the table's centre sits on: {@link #BUILD_DISTANCE} ahead of the player,
-     * dropped onto whatever ground is there.
-     *
-     * <p>Returns null if there is nothing to stand the table on within a few blocks up or
-     * down — over a ravine or in mid-air, refusing beats dropping a table into the void.
-     */
-    private Location groundInFront(Player player) {
-        Location eye = player.getLocation();
-        double rad = Math.toRadians(snap(eye.getYaw()));
-        // Snapped yaw, so the table lands square with the world grid the player is facing.
-        double fx = -Math.sin(rad);
-        double fz = Math.cos(rad);
-        int bx = eye.getBlockX() + (int) Math.round(fx * BUILD_DISTANCE);
-        int bz = eye.getBlockZ() + (int) Math.round(fz * BUILD_DISTANCE);
-        World w = player.getWorld();
-        int startY = eye.getBlockY();
-        for (int dy = 0; dy <= GROUND_SEARCH; dy++) {
-            for (int sign : new int[]{1, -1}) {
-                int y = startY + sign * dy;
-                if (y < w.getMinHeight() + 1 || y > w.getMaxHeight() - 2) {
-                    continue;
-                }
-                Block floor = w.getBlockAt(bx, y - 1, bz);
-                Block at = w.getBlockAt(bx, y, bz);
-                if (floor.getType().isSolid() && (at.getType().isAir() || at.isReplaceable())) {
-                    return new Location(w, bx + 0.5, y, bz + 0.5);
-                }
-                if (dy == 0) {
-                    break; // +0 and -0 are the same block
-                }
-            }
-        }
-        return null;
     }
 
     /** How many tables are already in this world (for the per-world cap). */
@@ -556,44 +579,67 @@ public class TableManager implements Listener {
         if (w == null) {
             return;
         }
-        Settings.TableBlocks palette = settings.tableBlocks(table.type());
+        TableTheme theme = themeOf(table);
         Location a = table.anchor();
-        // The 3×3 top: one layer of logs laid ring-face up, chequered. World-axis aligned and
-        // never rotated — a 3×3 is symmetric under the 90° steps snap() allows.
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int dz = -1; dz <= 1; dz++) {
-                // Corners and centre take the primary colour, the four edges the secondary.
-                Material log = ((Math.abs(dx) + Math.abs(dz)) % 2 == 0)
-                        ? palette.topPrimary() : palette.topSecondary();
-                BlockData data = log.createBlockData();
-                if (data instanceof Orientable orientable) {
-                    orientable.setAxis(Axis.Y); // rings up, bark on the sides
-                    data = orientable;
-                }
-                w.getBlockAt(a.clone().add(dx, 0, dz)).setBlockData(data, false);
+        for (int row = 0; row < TableTheme.SIZE; row++) {
+            for (int col = 0; col < TableTheme.SIZE; col++) {
+                Location at = cellLocation(table, row, col);
+                // A log laid flat shows bark on its top face, which is never what a table top
+                // wants; the theme can still override the axis explicitly in its block state.
+                theme.cell(row, col).place(at, customBlocks, TableManager::ringsUp);
             }
         }
-        for (Location seat : table.seats()) {
-            w.getBlockAt(seat).setBlockData(seatData(table, seat, palette.seat()), false);
+        List<Location> seats = table.seats();
+        for (int i = 0; i < seats.size(); i++) {
+            Location seat = seats.get(i);
+            BlockFace outward = outwardFace(a, seat);
+            theme.seat(TableTheme.Seat.values()[i])
+                    .place(seat, customBlocks, data -> faceOutward(data, outward));
         }
         table.setSpawned(true);
     }
 
     /**
-     * The stair a player sits on, facing away from the table.
+     * Where a theme cell lands in the world, turned to match the way the table faces.
+     *
+     * <p>The old build never rotated the top, because every theme was a symmetric chequer and
+     * rotating one changes nothing. Themes are author-drawn now, so an asymmetric pattern has
+     * to come out the same way round however the table was placed. The 90° steps {@link #snap}
+     * allows map the 3×3 onto itself exactly, so this can't put a tile off the block grid.
+     */
+    private static Location cellLocation(UnoTable table, int row, int col) {
+        // Table space: +forward is the far side, +right is the right-hand column.
+        int fwd = 1 - row;   // row 0 is the FAR row
+        int rgt = col - 1;   // col 0 is the LEFT column
+        double r = Math.toRadians(table.yaw());
+        double fx = -Math.sin(r);
+        double fz = Math.cos(r);
+        double gx = Math.cos(r);
+        double gz = Math.sin(r);
+        int dx = (int) Math.round(fx * fwd + gx * rgt);
+        int dz = (int) Math.round(fz * fwd + gz * rgt);
+        return table.anchor().add(dx, 0, dz);
+    }
+
+    /** Stand a log or pillar on end so its rings face up rather than its bark. */
+    private static BlockData ringsUp(BlockData data) {
+        if (data instanceof Orientable orientable) {
+            orientable.setAxis(Axis.Y);
+        }
+        return data;
+    }
+
+    /**
+     * Turn a seat block to face away from the table.
      *
      * <p>Stairs carry their full-height side on the face they FACE, so facing outward puts
      * the tall half behind the sitter like a backrest and leaves the low step toward the
-     * table.
+     * table. Anything that isn't directional is left exactly as the theme wrote it.
      */
-    private BlockData seatData(UnoTable table, Location seat, Material material) {
-        BlockData data = material.createBlockData();
-        if (data instanceof Directional directional) {
-            BlockFace outward = outwardFace(table.anchor(), seat);
-            if (directional.getFaces().contains(outward)) {
-                directional.setFacing(outward);
-                data = directional;
-            }
+    private static BlockData faceOutward(BlockData data, BlockFace outward) {
+        if (data instanceof Directional directional
+                && directional.getFaces().contains(outward)) {
+            directional.setFacing(outward);
         }
         return data;
     }
@@ -608,7 +654,13 @@ public class TableManager implements Listener {
         return dz >= 0 ? BlockFace.SOUTH : BlockFace.NORTH;
     }
 
-    /** Every block position this table owns: the 3×3 top and the four seats. */
+    /**
+     * Every block position this table owns: the 3×3 top and the four seats.
+     *
+     * <p>Still a plain 3×3 around the anchor whatever the yaw — rotating a square by 90° gives
+     * the same nine positions back, only in a different order — so this does not need the
+     * theme, and callers that only ask "is this block ours?" don't pay to resolve one.
+     */
     private static List<Location> footprint(UnoTable table) {
         List<Location> out = new ArrayList<>(13);
         Location a = table.anchor();
@@ -624,17 +676,22 @@ public class TableManager implements Listener {
     /**
      * Take the table's blocks back out of the world.
      *
-     * <p>Only clears a position that still holds the material the table put there, so a
+     * <p>Only clears a position that still holds a material this theme put there, so a
      * player who built something on the spot after breaking a seat doesn't lose it, and a
      * table removed twice can't punch a hole in whatever arrived in between.
      */
     private void clearBlocks(UnoTable table) {
         World w = table.anchor().getWorld();
         if (w != null) {
-            Settings.TableBlocks palette = settings.tableBlocks(table.type());
-            Set<Material> ours = palette.materials();
+            Set<Material> ours = themeMaterials(themeOf(table));
             for (Location loc : footprint(table)) {
                 Block b = w.getBlockAt(loc);
+                // Custom blocks first: on these plugins the world block is a note block or
+                // similar, so matching on Material alone would either miss it or clear a real
+                // one. The owning plugin also has its own bookkeeping to unwind.
+                if (customBlocks.any() && customBlocks.removeAt(b)) {
+                    continue;
+                }
                 if (ours.contains(b.getType())) {
                     b.setType(Material.AIR, false);
                 }
@@ -671,17 +728,97 @@ public class TableManager implements Listener {
 
     // ------------------------------------------------------------------ events
 
+    // ------------------------------------------------------------------- items
+
     /**
-     * {@code /uno createtable <theme>}: build one in front of the player and report why not.
+     * The item {@code /uno give} hands out: right-click the ground with it to build the table.
      *
-     * <p>There is no placeable item any more. Handing out a block that turns into a table on
-     * right-click meant the table was a thing you could stack, drop, put in a chest and lose;
-     * a command that builds it where you are standing has none of that to go wrong.
+     * <p>What the item IS matters less than what it carries. The kind and the theme id live in
+     * its persistent data, so a stack that has been through a chest, a hopper and somebody
+     * else's inventory still builds the table it was made for — and a theme renamed in
+     * themes.yml since then is caught at placement time rather than building something wrong.
      */
-    public void createTableCommand(Player player, UnoTable.Type type) {
-        switch (createTable(type, player)) {
+    public ItemStack createTableItem(UnoTable.Kind kind, TableTheme theme) {
+        ItemStack item = new ItemStack(Material.OAK_PRESSURE_PLATE);
+        ItemMeta meta = item.getItemMeta();
+        meta.displayName(Component.text(theme.displayName(), NamedTextColor.GOLD)
+                .decoration(TextDecoration.ITALIC, false));
+        meta.lore(List.of(
+                Component.text("Right-click the ground to place.", NamedTextColor.GRAY)
+                        .decoration(TextDecoration.ITALIC, false),
+                Component.text(capitalise(kind.key()) + " table · "
+                                + settings.tableMinPlayers() + "-" + settings.tableMaxPlayers()
+                                + " players", NamedTextColor.DARK_GRAY)
+                        .decoration(TextDecoration.ITALIC, false)));
+        meta.getPersistentDataContainer().set(itemKey, PersistentDataType.STRING,
+                kind.key() + "/" + theme.id());
+        meta.addItemFlags(ItemFlag.values());
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    /** {@code /uno give} — put a table item in the player's hands. */
+    public void giveTableItem(Player player, UnoTable.Kind kind, TableTheme theme) {
+        Map<Integer, ItemStack> left =
+                player.getInventory().addItem(createTableItem(kind, theme));
+        // A full inventory must not silently eat the item — drop it at their feet instead.
+        for (ItemStack overflow : left.values()) {
+            player.getWorld().dropItemNaturally(player.getLocation(), overflow);
+        }
+    }
+
+    private static String capitalise(String s) {
+        return s.isEmpty() ? s : Character.toUpperCase(s.charAt(0)) + s.substring(1);
+    }
+
+    /**
+     * Right-clicking the ground with a table item builds the table.
+     *
+     * <p>The event is cancelled up front whatever happens next: the item is a pressure plate,
+     * and letting the interact through would put a real pressure plate down beside the table.
+     */
+    @EventHandler(ignoreCancelled = true)
+    public void onInteract(PlayerInteractEvent event) {
+        if (event.getAction() != Action.RIGHT_CLICK_BLOCK
+                || event.getHand() != EquipmentSlot.HAND) {
+            return;
+        }
+        ItemStack item = event.getItem();
+        if (item == null || !item.hasItemMeta()) {
+            return;
+        }
+        String tag = item.getItemMeta().getPersistentDataContainer()
+                .get(itemKey, PersistentDataType.STRING);
+        if (tag == null) {
+            return;
+        }
+        event.setCancelled(true);
+        Block clicked = event.getClickedBlock();
+        if (clicked == null) {
+            return;
+        }
+        Player player = event.getPlayer();
+
+        String[] parts = tag.split("/", 2);
+        UnoTable.Kind kind = UnoTable.Kind.byKey(parts[0]);
+        TableTheme theme = parts.length > 1 ? themes.get(parts[1]) : null;
+        if (kind == null || theme == null) {
+            // The theme was deleted or renamed since the item was made. Say so rather than
+            // quietly building something else — the player chose this look on purpose.
+            messages.send(player, "table.item-stale");
+            return;
+        }
+        if (kind == UnoTable.Kind.CASINO) {
+            messages.send(player, "table.casino-unimplemented");
+            return;
+        }
+
+        switch (placeAt(kind, theme.id(), clicked, player)) {
             case OK -> {
-                messages.send(player, "table.placed", "variant", type.displayName());
+                if (player.getGameMode() != GameMode.CREATIVE) {
+                    item.setAmount(item.getAmount() - 1);
+                }
+                messages.send(player, "table.placed", "variant", theme.displayName());
                 fx.tablePlaced(lastBuilt.anchor());
             }
             case TOO_CLOSE -> messages.send(player, "table.too-close");

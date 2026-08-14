@@ -38,7 +38,8 @@ plugin:
   help-gamble: "<yellow>/gamble <gray>— wager items on a hand (see <yellow>/gamble help<gray>)"
   help-version: "<yellow>/uno version <gray>— plugin version"
   help-admin-header: "<dark_gray>— admin —"
-  help-createtable: "<yellow>/uno createtable <theme> <gray>— build a table in front of you (cherry, darkcherry, spruce, strippedoak)"
+  help-give: "<yellow>/uno give <casual|casino> <theme> <gray>— a placeable table item; right-click the ground with it"
+  help-theme: "<yellow>/uno theme <list|create|edit|delete> [id] <gray>— design the blocks a table is built from"
   help-remove: "<yellow>/uno remove <gray>— remove the nearest table"
   help-list: "<yellow>/uno list <gray>— every placed table"
   help-info: "<yellow>/uno info <gray>— running games and open pots"
@@ -48,10 +49,15 @@ plugin:
   help-reload: "<yellow>/uno reload <gray>— re-read config.yml and messages.yml"
 
 table:
+  pick-kind: "<yellow>Which kind of table? <gray><kinds>"
+  unknown-kind: "<red>No such kind of table. <gray>Pick one of: <yellow><kinds>"
+  casino-unimplemented: "<yellow>Casino tables aren't built yet — <gray>only <yellow>casual<gray> works for now."
+  given: "<green>Here's a <variant>. <gray>Right-click the ground with it to place it."
+  item-stale: "<red>That table item's theme no longer exists. <gray>Ask an admin for a new one."
   pick-variant: "<yellow>Which theme? <gray><variants>"
   unknown-type: "<red>No such table. <gray>Pick one of: <yellow><variants>"
   placed: "<green><variant> built. <gray>Walk up to it and type <yellow>/uno join<gray> to sit."
-  no-room: "<red>No room in front of you — face open, level ground and try again."
+  no-room: "<red>No room there — aim at open, level ground with 2 blocks clear all round."
   protected: "<red>That block is part of a UNO table. <gray>Use <yellow>/uno remove<gray> to take it down."
   too-close: "<red>Too close to another table — give it more room."
   world-limit: "<red>This world already has its limit of <limit> UNO table(s)."
@@ -67,10 +73,23 @@ table:
   stand-forfeit: "<red>You stood up, so you're out of the hand. <gray>Sit back down and deal again when you're ready."
   list-header: "<gold><bold>UNO tables</bold> <dark_gray>— <count> placed"
   list-entry: "<dark_gray> · <yellow><id> <gray><world> <white><x>, <y>, <z> <dark_gray>[<gray><seated>/<seats> seated<dark_gray>]"
-  list-empty: "<gray>No tables yet. <yellow>/uno createtable <theme><gray> to build one."
+  list-empty: "<gray>No tables yet. <yellow>/uno give casual <theme><gray> to get one to place."
   not-found: "<red>No table with id starting <yellow><id><red>."
   teleported: "<green>Teleported to table <yellow><id><green>."
   pending-world: "<dark_gray> · <yellow><id> <gray><world> <dark_red>(world not loaded — kept on file)"
+
+theme:
+  list-header: "<gold><bold>Table themes</bold> <dark_gray>— <count> available"
+  list-entry: "<dark_gray> · <yellow><id> <gray><name> <dark_gray>(<kind>)"
+  need-id: "<yellow>Name the theme. <gray>e.g. <yellow>/uno theme create marble"
+  bad-id: "<red>That isn't a usable theme name."
+  built-in-locked: "<red><theme> is a built-in theme. <gray>Make a copy under a new name instead."
+  editor-opened: "<gray>Fill the <yellow>3×3<gray> grid with the table top and the <yellow>four edge slots<gray> with seat blocks, then click <green>Save<gray>."
+  editor-cancelled: "<gray>Theme editor closed — nothing saved. <gray>Your blocks are back in your inventory."
+  incomplete: "<red>Every grid slot and all four seat slots need a block in them."
+  saved: "<green>Saved theme <yellow><theme><green>. <gray>Hand it out with <yellow>/uno give casual <theme><gray>."
+  deleted: "<green>Deleted theme <yellow><theme><green>."
+  undeletable: "<red>Can't delete <yellow><theme><red> — it's built in, missing, or the only one left."
 
 game:
   started: "<gold><bold>UNO</bold> <gray>started — <count> players. Good luck!"
@@ -111,6 +130,7 @@ game:
   info-none: "<gray>Nothing running."
   ended: "<green>Ended <count> hand(s)."
   end-none: "<gray>No matching hand to end."
+
 
 hand:
   selected: "<gray>Selected: <white><card> <dark_gray>(<index>/<count>)"
