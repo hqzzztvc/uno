@@ -97,8 +97,27 @@ def display(theta, depth):
     return {
         "firstperson_righthand": {"rotation": [FP_TILT_X, 0, theta], "translation": fp_tr, "scale": [FP_SCALE, FP_SCALE, FP_SCALE]},
         "thirdperson_righthand": {"rotation": [0, 0, theta], "translation": tp_tr, "scale": [TP_SCALE, TP_SCALE, TP_SCALE]},
-        "gui": {"rotation": [0, 0, 0], "translation": [0, 0, 0], "scale": [1, 1, 1]},
+        # Collapsed to nothing in the GUI, where GUI_ICON draws instead. The fan's tilt lives
+        # in the hand transforms only, so in the hotbar all 21 quads would land square on the
+        # same spot — and the quad reaches to y=23, well past the 16-unit model box, so what
+        # actually rendered was the clipped top corner of whichever card drew last.
+        "gui": {"rotation": [0, 0, 0], "translation": [0, 0, 0], "scale": [0, 0, 0]},
     }
+
+
+# The hotbar/inventory icon: one clean card back, drawn as a flat sprite the way any vanilla
+# item is. It rides along in the composite as a fixed 22nd model and is scaled away in the
+# four hand transforms, so it is the icon everywhere the fan is NOT being held up.
+GUI_ICON = {
+    "parent": "minecraft:item/generated",
+    "textures": {"layer0": "minecraft:item/cards/back"},
+    "display": {
+        "firstperson_righthand": {"scale": [0, 0, 0]},
+        "firstperson_lefthand": {"scale": [0, 0, 0]},
+        "thirdperson_righthand": {"scale": [0, 0, 0]},
+        "thirdperson_lefthand": {"scale": [0, 0, 0]},
+    },
+}
 
 
 def card_textures(card):
@@ -136,6 +155,8 @@ def main():
     os.makedirs(MODELS, exist_ok=True)
     with open(os.path.join(MODELS, "empty.json"), "w") as f:
         json.dump({"elements": []}, f)
+    with open(os.path.join(MODELS, "gui_icon.json"), "w") as f:
+        json.dump(GUI_ICON, f)
 
     for di, step in enumerate(DENSITIES):
         for k in range(MAX_SLOTS):
@@ -161,7 +182,9 @@ def main():
                 cases.append({"when": f"{card}_{di}_sel", "model": {"type": "minecraft:model", "model": f"{base}/{card}_sel"}})
         return {"type": "minecraft:select", "property": "minecraft:custom_model_data", "index": k, "fallback": empty_ref, "cases": cases}
 
-    item = {"model": {"type": "minecraft:composite", "models": [select(k) for k in range(MAX_SLOTS)]}}
+    parts = [select(k) for k in range(MAX_SLOTS)]
+    parts.append({"type": "minecraft:model", "model": "uno:item/held/gui_icon"})
+    item = {"model": {"type": "minecraft:composite", "models": parts}}
     os.makedirs(os.path.dirname(ITEM), exist_ok=True)
     with open(ITEM, "w") as f:
         json.dump(item, f)

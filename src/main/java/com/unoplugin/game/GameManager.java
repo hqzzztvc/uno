@@ -67,6 +67,14 @@ public final class GameManager implements Listener, HandManager.CardActions {
     private final Set<UUID> bots = new HashSet<>();
     private GameListener listener;                                  // optional (the bet layer)
 
+    /**
+     * How far each pile sits from the table centre, along the axis set in {@link #launch}.
+     *
+     * <p>A card is about half a block across at the pile scale, so the two piles have to be
+     * more than that apart or they overlap into one shape whichever way you look at them.
+     */
+    private static final double PILE_SPREAD = 0.55;
+
     /** Lets another subsystem (the wagering layer) react to how a hand ends. */
     public interface GameListener {
         /** The hand is over. {@code winner} is null if it ended without one, and may be a bot. */
@@ -235,11 +243,18 @@ public final class GameManager implements Listener, HandManager.CardActions {
         Location centre = table.anchor();
         float pileYaw = table.yaw();
         double r = Math.toRadians(pileYaw);
-        Vector right = new Vector(Math.cos(r), 0, Math.sin(r));
+        // The piles are laid out on the diagonal, BETWEEN the seats, and that is the whole
+        // point of the 45°. Seats sit at the four cardinal points of the table, so putting
+        // the piles on the forward or the right axis lines them up nose-to-tail for the two
+        // seats on that axis: the draw pile is a solid block of cards three times the height
+        // of the flat discard heap, and at seated eye height it hides the discard completely.
+        // Off the seat axes, every seat sees the two piles side by side instead.
+        double axis = r + Math.PI / 4;
+        Vector spread = new Vector(Math.cos(axis), 0, Math.sin(axis));
         // Bottom card sits flush on the table surface.
-        Location discardLoc = centre.clone().add(right.clone().multiply(-0.38));
+        Location discardLoc = centre.clone().add(spread.clone().multiply(-PILE_SPREAD));
         discardLoc.setY(centre.getY() + UnoTable.SURFACE_Y);
-        Location drawLoc = centre.clone().add(right.clone().multiply(0.38));
+        Location drawLoc = centre.clone().add(spread.clone().multiply(PILE_SPREAD));
         drawLoc.setY(centre.getY() + UnoTable.SURFACE_Y);
 
         PileRenderer pile = new PileRenderer(plugin, discardLoc, drawLoc, pileYaw);

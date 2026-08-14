@@ -127,10 +127,10 @@ python3 generate_held_fan.py      # the ~6800-file uno:held composite fan (model
   transform's own scale. So `FP_TRANS[0]` has to pull the fan back left, `MAX_SPAN` has to keep
   the outermost card's 0.27-block reach from leaning off the right edge, and — the one that bit
   — a forward `translation` on the *selected* card moves it toward the camera, which magnifies
-  every screen offset in the fan. The old fixed `SEL_FRONT` (11 depth steps, 0.18 blocks, on an
-  item 0.72 from the eye) put the selected card up to 1.5× the half-width off the side of the
-  screen. Selection is now `slot_depth(k) + SEL_POP_Z` plus a `SEL_LIFT_Y` straight up: the card
-  rises out of the fan and stays where the player can see it.
+  every screen offset in the fan. A `SEL_FRONT` of 3.3875 (0.21 blocks, on an item 0.72 from the
+  eye) magnified the selected card ~1.33× and threw it off the side of the screen. `SEL_FRONT` is
+  now **0.5** — barely in front of the front-most slot, so the selected card reads as lifted
+  without leaving the fan. Raising it is the fastest way to break first person again.
 - `generate_hand_model.sh` builds the static 7-card `uno:hand` item used only by the `/uno hand` debug
   command; it is not part of gameplay. All five `CardTester`/fan debug commands require both
   `uno.admin` **and** `debug: true` in config.yml — they spawn per-tick display entities and have no
