@@ -215,36 +215,64 @@ public final class ThemeStore {
     // ------------------------------------------------------------- the built-ins
 
     /**
-     * The four themes that shipped as enum constants.
+     * The themes that ship with the plugin.
      *
      * <p>Kept in code as well as in the file so a deleted or corrupted themes.yml still leaves
-     * the server with working tables. The chequer is the same shape they always had: the
-     * primary wood on the corners and centre, the secondary on the four edges.
+     * the server with working tables. All nine were drawn in the in-game editor and then moved
+     * here, which is why each is named after its own id — that is what {@code /uno theme create}
+     * writes. Every one is the same chequer: the primary wood on the corners and centre, the
+     * secondary on the four edges.
+     *
+     * <p>The blocks carry no {@code [axis=y]}, because {@code TableManager.ringsUp} turns an
+     * {@code Orientable} upright as it lays it. A theme that wants a log on its side still says
+     * so explicitly and is left alone.
+     *
+     * <p>Public so {@code TableThemeTest} can check the legacy migration against the themes that
+     * really ship rather than against a copy of the list that can drift out of step with it.
      */
-    private static List<TableTheme> builtIns() {
-        List<TableTheme> out = new ArrayList<>(4);
-        out.add(chequer("cherry", "Cherry Table",
-                "minecraft:stripped_cherry_log[axis=y]",
-                "minecraft:stripped_pale_oak_log[axis=y]",
+    public static List<TableTheme> builtIns() {
+        List<TableTheme> out = new ArrayList<>(9);
+        out.add(chequer("darkoak",
+                "minecraft:dark_oak_log",
+                "minecraft:pale_oak_log",
+                "minecraft:deepslate_tile_stairs"));
+        out.add(chequer("lightcherry",
+                "minecraft:stripped_cherry_log",
+                "minecraft:stripped_pale_oak_log",
                 "minecraft:cherry_stairs"));
-        out.add(chequer("darkcherry", "Dark Cherry Table",
-                "minecraft:cherry_log[axis=y]",
-                "minecraft:pale_oak_log[axis=y]",
-                "minecraft:pale_oak_stairs"));
-        out.add(chequer("spruce", "Spruce Table",
-                "minecraft:spruce_log[axis=y]",
-                "minecraft:oak_log[axis=y]",
+        out.add(chequer("darkspruce",
+                "minecraft:spruce_log",
+                "minecraft:oak_log",
                 "minecraft:dark_oak_stairs"));
-        out.add(chequer("strippedoak", "Stripped Oak Table",
-                "minecraft:stripped_spruce_log[axis=y]",
-                "minecraft:stripped_oak_log[axis=y]",
+        out.add(chequer("spruce",
+                "minecraft:stripped_spruce_log",
+                "minecraft:stripped_oak_log",
                 "minecraft:spruce_stairs"));
+        out.add(chequer("darkcherry",
+                "minecraft:cherry_log",
+                "minecraft:pale_oak_log",
+                "minecraft:nether_brick_stairs"));
+        out.add(chequer("cherry",
+                "minecraft:cherry_log",
+                "minecraft:pale_oak_log",
+                "minecraft:pale_oak_stairs"));
+        out.add(chequer("darkmangrove",
+                "minecraft:dark_oak_log",
+                "minecraft:mangrove_log",
+                "minecraft:dark_oak_stairs"));
+        out.add(chequer("mangrove",
+                "minecraft:stripped_dark_oak_log",
+                "minecraft:stripped_mangrove_log",
+                "minecraft:dark_oak_stairs"));
+        out.add(chequer("lightmangrove",
+                "minecraft:stripped_mangrove_log",
+                "minecraft:stripped_pale_oak_log",
+                "minecraft:mangrove_stairs"));
         return out;
     }
 
     /** The classic layout: primary on corners and centre, secondary on the edges. */
-    private static TableTheme chequer(String id, String name,
-                                      String primary, String secondary, String seat) {
+    private static TableTheme chequer(String id, String primary, String secondary, String seat) {
         BlockSpec[][] grid = new BlockSpec[TableTheme.SIZE][TableTheme.SIZE];
         for (int r = 0; r < TableTheme.SIZE; r++) {
             for (int c = 0; c < TableTheme.SIZE; c++) {
@@ -256,19 +284,34 @@ public final class ThemeStore {
         for (TableTheme.Seat s : TableTheme.Seat.values()) {
             seats[s.ordinal()] = BlockSpec.parse(seat);
         }
-        return new TableTheme(id, name, grid, seats, true);
+        // Named after its own id: these were drawn with /uno theme create, which does the same.
+        return new TableTheme(id, id, grid, seats, true);
     }
 
-    /** Legacy {@code tables.yml} type names, mapped onto the theme that replaced them. */
+    /**
+     * Legacy {@code tables.yml} type names, mapped onto the theme that replaced them.
+     *
+     * <p>Two generations of names arrive here: the {@code type:} enum constants from before
+     * themes existed, and the four ids the first data-driven build shipped. Both are mapped by
+     * palette rather than by name, because the wood is what a player recognises their table by.
+     * Every one of those palettes still ships — they were renamed on the light/dark axis, and
+     * that rename crosses over: what {@code cherry} used to mean is now {@code lightcherry},
+     * and what {@code spruce} used to mean is now {@code darkspruce}. Mapping on the name would
+     * quietly hand those tables a different wood.
+     */
     public static String migrateLegacyId(String stored) {
         if (stored == null) {
             return "cherry";
         }
         return switch (stored.toUpperCase(Locale.ROOT)) {
-            case "CASINO", "BLOSSOM", "CHERRY" -> "cherry";
-            case "MIDNIGHT", "DARK_CHERRY", "DARKCHERRY" -> "darkcherry";
-            case "TAVERN", "OAK", "SPRUCE" -> "spruce";
-            case "HOMESTEAD", "BIRCH", "STRIPPED_OAK", "STRIPPEDOAK" -> "strippedoak";
+            // stripped cherry + stripped pale oak, cherry stairs
+            case "CASINO", "BLOSSOM", "CHERRY" -> "lightcherry";
+            // cherry + pale oak, pale oak stairs
+            case "MIDNIGHT", "DARK_CHERRY", "DARKCHERRY" -> "cherry";
+            // spruce + oak, dark oak stairs
+            case "TAVERN", "OAK", "SPRUCE" -> "darkspruce";
+            // stripped spruce + stripped oak, spruce stairs
+            case "HOMESTEAD", "BIRCH", "STRIPPED_OAK", "STRIPPEDOAK" -> "spruce";
             default -> TableTheme.normaliseId(stored);
         };
     }

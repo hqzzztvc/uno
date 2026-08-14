@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -65,26 +66,64 @@ class TableThemeTest {
      */
     @Test
     void legacyTypeNamesMapOntoBuiltInThemes() {
-        Set<String> builtIn = Set.of("cherry", "darkcherry", "spruce", "strippedoak");
+        // Read the real list rather than a copy of it: a set written out here goes stale the
+        // moment a shipped theme is renamed, which is exactly the change this test guards.
+        Set<String> builtIn = ThemeStore.builtIns().stream()
+                .map(TableTheme::id)
+                .collect(Collectors.toSet());
         String[] legacy = {
                 "CASINO", "BLOSSOM", "CHERRY",
-                "MIDNIGHT", "DARK_CHERRY",
+                "MIDNIGHT", "DARK_CHERRY", "DARKCHERRY",
                 "TAVERN", "OAK", "SPRUCE",
-                "HOMESTEAD", "BIRCH", "STRIPPED_OAK"};
+                "HOMESTEAD", "BIRCH", "STRIPPED_OAK", "STRIPPEDOAK"};
         for (String name : legacy) {
             String id = ThemeStore.migrateLegacyId(name);
             assertTrue(builtIn.contains(id),
                     name + " migrated to '" + id + "', which is not a built-in theme");
         }
+        assertTrue(builtIn.contains(ThemeStore.migrateLegacyId(null)),
+                "the null default must name a theme that ships");
     }
 
-    /** The oak/spruce pair was mis-built once; both old names must land on the woods meant. */
+    /**
+     * The light/dark rename crosses over, so migrating on the name would swap the wood.
+     *
+     * <p>The palette that used to be called {@code cherry} ships as {@code lightcherry} and the
+     * one called {@code spruce} ships as {@code darkspruce} — while both of those names are
+     * still in use, for different woods. A legacy table has to follow its palette.
+     */
     @Test
-    void theOakSpruceRenameIsPreserved() {
-        assertEquals("spruce", ThemeStore.migrateLegacyId("TAVERN"));
-        assertEquals("spruce", ThemeStore.migrateLegacyId("OAK"));
-        assertEquals("strippedoak", ThemeStore.migrateLegacyId("HOMESTEAD"));
-        assertEquals("strippedoak", ThemeStore.migrateLegacyId("BIRCH"));
+    void theLightDarkRenameFollowsThePalette() {
+        assertEquals("lightcherry", ThemeStore.migrateLegacyId("CASINO"));
+        assertEquals("lightcherry", ThemeStore.migrateLegacyId("CHERRY"));
+        assertEquals("cherry", ThemeStore.migrateLegacyId("MIDNIGHT"));
+        assertEquals("cherry", ThemeStore.migrateLegacyId("DARKCHERRY"));
+        assertEquals("darkspruce", ThemeStore.migrateLegacyId("TAVERN"));
+        assertEquals("darkspruce", ThemeStore.migrateLegacyId("OAK"));
+        assertEquals("darkspruce", ThemeStore.migrateLegacyId("SPRUCE"));
+        assertEquals("spruce", ThemeStore.migrateLegacyId("HOMESTEAD"));
+        assertEquals("spruce", ThemeStore.migrateLegacyId("BIRCH"));
+        assertEquals("spruce", ThemeStore.migrateLegacyId("STRIPPEDOAK"));
+    }
+
+    /** Every shipped theme is complete and uniquely named — the file is seeded straight from it. */
+    @Test
+    void builtInThemesAreWellFormed() {
+        Set<String> seen = new HashSet<>();
+        for (TableTheme theme : ThemeStore.builtIns()) {
+            assertTrue(seen.add(theme.id()), "duplicate built-in theme id: " + theme.id());
+            assertEquals(theme.id(), TableTheme.normaliseId(theme.id()),
+                    theme.id() + " is not a normalised id, so /uno give could not name it");
+            assertTrue(theme.builtIn(), theme.id() + " must be marked built-in");
+            for (int r = 0; r < TableTheme.SIZE; r++) {
+                for (int c = 0; c < TableTheme.SIZE; c++) {
+                    assertNotNull(theme.cell(r, c), theme.id() + " has a hole at " + r + "," + c);
+                }
+            }
+            for (TableTheme.Seat seat : TableTheme.Seat.values()) {
+                assertNotNull(theme.seat(seat), theme.id() + " has no " + seat.key() + " seat");
+            }
+        }
     }
 
     /** A name written by a build we've never seen passes through rather than being dropped. */

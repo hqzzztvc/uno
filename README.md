@@ -1,8 +1,8 @@
 # UNO
 
-A fully playable multiplayer UNO card game for **Paper 26.2** — four variants of a placeable table
-with stair seats, a card fan held in your hand, card piles that sit on the table for everyone to
-see, and an optional "Let It Ride" mode where you wager items on a hand.
+A fully playable multiplayer UNO card game for **Paper 26.2** — a placeable table with stair seats
+in nine themes (or any you build yourself), a card fan held in your hand, card piles that sit on
+the table for everyone to see, and an optional "Let It Ride" mode where you wager items on a hand.
 
 No mods. Tables are ordinary blocks; everything else is vanilla display entities plus a
 client-side resource pack.
@@ -41,7 +41,7 @@ Build a table, sit down, deal:
 ```
 /uno give casual <theme>   # admin — hands you a placeable table item
                            # right-click the ground with it to build the table
-                           # cherry | darkcherry | spruce | strippedoak, or your own
+                           # cherry | spruce | mangrove | darkoak | …, or your own
 /uno join              # stand next to a table and take the nearest free seat
 /uno leave             # get up (Shift does the same)
 /uno quit              # drop out of the hand you're in — others play on
@@ -51,23 +51,30 @@ Build a table, sit down, deal:
 
 You need at least 2 players; every table seats 4. Bots can fill the empty chairs.
 
-### Table variants
+### Table themes
 
-All four are the same table — a 3×3 chequered top of logs with a stair pulled up to each side — in
+All nine are the same table — a 3×3 chequered top of logs with a stair pulled up to each side — in
 different blocks. They are **real blocks set into the world**, not display entities, so they save
-with the chunk and cost nothing to render. Retheme any under `tables.<theme>.blocks.*` in
-`config.yml`.
+with the chunk and cost nothing to render. Edit any of them, or add your own, with
+`/uno theme create` or by hand in `plugins/UNO/themes.yml`.
 
-Each is named for the wood it's made of. Cherry appears twice on purpose: stripped cherry is pink
-on every face, while unstripped cherry keeps pink rings on top and dark bark down the sides — that
-dark frame is the bark, not a separate block.
+Each is named for the wood it's made of, on a light/dark axis. Stripping is what that axis means:
+**stripped** cherry is pink on every face, while unstripped cherry keeps pink rings on top and
+dark bark down the sides — that dark frame is the bark, not a separate block.
 
 | Theme | Top | Seats |
 |---|---|---|
-| `cherry` | stripped cherry & stripped pale oak | cherry stairs |
-| `darkcherry` | cherry & pale oak (dark bark sides) | pale oak stairs |
-| `spruce` | spruce & oak | dark oak stairs |
-| `strippedoak` | stripped spruce & stripped oak | spruce stairs |
+| `lightcherry` | stripped cherry & stripped pale oak | cherry stairs |
+| `cherry` | cherry & pale oak (dark bark sides) | pale oak stairs |
+| `darkcherry` | cherry & pale oak (dark bark sides) | nether brick stairs |
+| `spruce` | stripped spruce & stripped oak | spruce stairs |
+| `darkspruce` | spruce & oak | dark oak stairs |
+| `darkoak` | dark oak & pale oak | deepslate tile stairs |
+| `lightmangrove` | stripped mangrove & stripped pale oak | mangrove stairs |
+| `mangrove` | stripped dark oak & stripped mangrove | dark oak stairs |
+| `darkmangrove` | dark oak & mangrove | dark oak stairs |
+
+`cherry` and `darkcherry` are the same top; the seats are the whole difference.
 
 ### Controls
 
@@ -127,8 +134,8 @@ The rules that give the mode its teeth:
 
 What a table is made of is **data**, not code. Every look is a "theme" in
 `plugins/UNO/themes.yml`: a 3×3 grid of blocks for the top, plus a block for each of the four
-seats. The four that ship (`cherry`, `darkcherry`, `spruce`, `strippedoak`) are written into that
-file on first run and are not special — edit them, or add your own.
+seats. The nine that ship are written into that file on first run and are not special — edit them,
+or add your own.
 
 Build one in game rather than by hand:
 

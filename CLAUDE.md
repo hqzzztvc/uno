@@ -21,8 +21,8 @@ session that has been idle.
 ## What this is
 
 A Paper server plugin (`com.unoplugin`) that implements a fully playable multiplayer UNO game inside
-Minecraft: four variants of a placeable table with stair seats, a card fan held in the player's
-hand, in-world draw/discard piles, and an item-wagering mode ("Let It Ride").
+Minecraft: a placeable table with stair seats in nine themes (or any an admin builds), a card fan
+held in the player's hand, in-world draw/discard piles, and an item-wagering mode ("Let It Ride").
 
 Two halves that must stay in sync:
 
@@ -308,9 +308,22 @@ vanish every five plays is the bug that shape was hiding.
 A table's **looks are data, not code**. There is one shape — a 3×3 top with a stair pulled up to
 the middle of each side — and a `TableTheme` says which block goes in each of the nine cells and
 each of the four seats. `ThemeStore` loads them from `plugins/UNO/themes.yml`, which is also
-written back by the in-game editor. The four themes that used to be `UnoTable.Type` constants are
-seeded into that file on first run and are **not special-cased anywhere** — they carry a
-`built-in` flag only so `/uno theme delete` refuses to leave a server with no themes.
+written back by the in-game editor. The nine themes in `ThemeStore.builtIns()` are seeded into that
+file on first run and are **not special-cased anywhere** — they carry a `built-in` flag only so
+`/uno theme delete` refuses to leave a server with no themes.
+
+The shipped nine were **drawn in the in-game editor and moved into the Java**, not authored there,
+which is why each is named after its own id — that is what `/uno theme create` writes. They are all
+the same chequer (primary wood on the corners and centre, secondary on the four edges) and none of
+them writes an `[axis=y]`, because `ringsUp` stands logs on end as it lays them.
+
+**`migrateLegacyId` maps on the palette, not the name, and that matters because the rename crosses
+over.** The four ids the first data-driven build shipped were renamed onto a light/dark axis, and
+two of the old names are still in use for different woods: what `cherry` used to mean now ships as
+`lightcherry`, and what `spruce` used to mean now ships as `darkspruce`. An identity mapping would
+quietly hand every legacy table a different wood. `TableThemeTest` reads `builtIns()` directly
+rather than a copy of the id list, so renaming a shipped theme without fixing the migration fails
+the build instead of retexturing somebody's table.
 
 `UnoTable` now carries a **theme id string plus a `Kind`** (`CASUAL` / `CASINO`), not a variant
 enum. Kind is orthogonal to theme on purpose: a casino table should be able to wear any theme a
@@ -333,9 +346,10 @@ theme has to reach the tables already standing.
   `footprint()` deliberately does **not** rotate — a square maps onto itself, so "is this block
   ours?" needs no theme and stays cheap.
 - Because the top is one layer of whole blocks, a theme's sides are whatever the block's own sides
-  look like. That is the whole difference between `cherry` and `darkcherry`: **stripped** cherry is
+  look like. That is the whole difference between `lightcherry` and `cherry`: **stripped** cherry is
   pink on every face, **unstripped** cherry keeps pink rings on top with dark bark down the sides.
-  The dark frame in the original mock-up was that bark, not a separate block.
+  The dark frame in the original mock-up was that bark, not a separate block. It is also why the
+  light/dark axis in the shipped theme names is about stripping rather than about the wood.
 - A log laid flat shows bark on its top face, so `buildBlocks` stands `Orientable` blocks on end
   (`ringsUp`). A theme can still override that by writing the axis into its block state.
 - Stairs carry their full-height side on the face they *face*, so a seat faces **outward** — that
