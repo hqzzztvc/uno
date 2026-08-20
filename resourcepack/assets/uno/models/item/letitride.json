@@ -1,0 +1,41 @@
+{
+  "format_version": "1.21.11",
+  "texture_size": [192, 192],
+  "textures": {
+    "sides": "minecraft:item/cards/sides",
+    "logo": "minecraft:item/letitride",
+    "particle": "minecraft:item/letitride"
+  },
+  "elements": [
+    {
+      "from": [0, 0, 0],
+      "to": [32, 32, 0.5],
+      "faces": {
+        "north": {
+          "uv": [0, 0, 16, 16],
+          "texture": "#logo"
+        },
+        "east": {
+          "uv": [0.08333, 0, 0.16667, 2.66667],
+          "texture": "#sides"
+        },
+        "south": {
+          "uv": [0, 0, 2.66667, 2.66667],
+          "texture": "#sides"
+        },
+        "west": {
+          "uv": [0, 0, 0.08333, 2.66667],
+          "texture": "#sides"
+        },
+        "up": {
+          "uv": [0, 0, 2.66667, 0.08333],
+          "texture": "#sides"
+        },
+        "down": {
+          "uv": [0, 0.08333, 2.66667, 0.16667],
+          "texture": "#sides"
+        }
+      }
+    }
+  ]
+}
