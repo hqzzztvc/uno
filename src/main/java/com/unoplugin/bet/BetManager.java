@@ -40,10 +40,16 @@ import java.util.UUID;
 /**
  * "Let It Ride" — the wagering layer on top of a normal UNO hand.
  *
- * <p>The loop: <b>/gamble</b> opens an ante at your table, players toss items onto the felt
- * to stake them, <b>/gamble ready</b> locks a stake in, and when everyone's ready the table
- * plays one hand of UNO for the whole pot. The winner then chooses: cash out, or let the pot
- * ride into the next hand and make the table match it.
+ * <p>The loop: <b>/gamble</b> opens an ante at your table and lays the mat on it, players
+ * put something up — items tossed onto the felt, or currency with <b>/gamble &lt;amount&gt;</b>
+ * — <b>/gamble ready</b> locks a stake in, and when everyone's ready the table plays one hand
+ * of UNO for the whole pot. The winner then chooses: cash out, or let the pot ride into the
+ * next hand and make the table match it.
+ *
+ * <p>Items and money are one thing to every rule here — see {@link Stake}. Money reaches the
+ * server's economy through {@link VaultEconomy} and is withdrawn from the staker's balance
+ * the instant it is staked, so it lives in escrow exactly as items do and a crash refunds
+ * both.
  *
  * <p>Two rules give the mode its teeth:
  * <ul>
@@ -68,6 +74,7 @@ public final class BetManager implements Listener, GameManager.GameListener {
     private final Settings settings;
     private final NameCache names;
     private final Fx fx;
+    private final VaultEconomy economy;
     private final EscrowStore escrow;
     private final BetLog log;
 
@@ -83,7 +90,8 @@ public final class BetManager implements Listener, GameManager.GameListener {
         this.settings = settings;
         this.names = names;
         this.fx = fx;
-        this.escrow = new EscrowStore(plugin, messages);
+        this.economy = new VaultEconomy(plugin);
+        this.escrow = new EscrowStore(plugin, messages, economy);
         this.log = new BetLog(plugin, settings.auditLog());
     }
 
@@ -106,7 +114,36 @@ public final class BetManager implements Listener, GameManager.GameListener {
             case "ride" -> ride(player);
             case "cash", "cashout" -> cash(player);
             case "bots" -> setBots(player, args);
-            default -> help(player);
+            default -> {
+                // A bare number IS the command: `/gamble 500` opens the ante if it needs to
+                // and puts 500 in. Anything that isn't a number falls through to help, so a
+                // typo still tells you what the verbs are.
+                Double amount = parseAmount(sub);
+                if (amount == null) {
+                    help(player);
+                } else {
+                    stakeMoney(player, amount);
+                }
+            }
+        }
+    }
+
+    /**
+     * A wager amount, or null if this isn't one.
+     *
+     * <p>Rounded to whole cents up front, because every later comparison — the minimum, the
+     * pot cap, "did the challenger match it?" — is against a number the player was shown, and
+     * a third of a penny hiding behind the formatting makes those read as lies.
+     */
+    private static Double parseAmount(String raw) {
+        try {
+            double value = Double.parseDouble(raw.replace(",", ""));
+            if (!Double.isFinite(value) || value <= 0) {
+                return null;
+            }
+            return Math.round(value * 100.0) / 100.0;
+        } catch (NumberFormatException ex) {
+            return null;
         }
     }
 
@@ -116,10 +153,47 @@ public final class BetManager implements Listener, GameManager.GameListener {
     }
 
     private void help(Player p) {
-        for (String key : new String[]{"bet.help-header", "bet.help-open", "bet.help-stake",
-                "bet.help-ready", "bet.help-pot", "bet.help-cancel"}) {
+        messages.send(p, "bet.help-header");
+        messages.send(p, "bet.help-open");
+        messages.send(p, "bet.help-stake");
+        if (moneyAllowed()) {
+            messages.send(p, "bet.help-money");
+        }
+        for (String key : new String[]{"bet.help-ready", "bet.help-pot", "bet.help-cancel"}) {
             messages.send(p, key);
         }
+    }
+
+    /** True if currency can be wagered here at all: switched on, and an economy to do it. */
+    private boolean moneyAllowed() {
+        return settings.moneyEnabled() && economy.available();
+    }
+
+    /**
+     * The money-aware wording of a hint, where one exists.
+     *
+     * <p>Every "here's how you buy in" line has two versions, because telling a player about
+     * {@code /gamble <amount>} on a server with no economy sends them at a door that isn't
+     * there — and leaving cash out of the wording on a server that HAS one is how you end up
+     * unable to work out that items and money go in the same pot.
+     */
+    private String hint(String base) {
+        return moneyAllowed() ? base + "-money" : base;
+    }
+
+    /**
+     * After every stake: what this player has in, and the one click that locks it.
+     *
+     * <p>Says "you have X in" rather than "you staked X", and names the other currency, because
+     * <strong>items and money add up and nothing was telling anyone that.</strong> The old
+     * flow put a bare [ I'M IN ] under a cash stake, which reads as the next step — and taking
+     * it slams the door, since a locked-in player's dropped items are refused. Raising has to
+     * look at least as available as locking in.
+     */
+    private void stakeHint(Player p, BetSession s) {
+        messages.send(p, hint("bet.your-stake"),
+                "stake", stakeLabel(s.stakeOf(p.getUniqueId())),
+                "lock", messages.button("bet.lock-in-button", "/gamble ready"));
     }
 
     /** Open a new ante at the player's table, or join the one already running. */
@@ -134,13 +208,29 @@ public final class BetManager implements Listener, GameManager.GameListener {
             return;
         }
         BetSession s = byTable.get(table.id());
+        if (s == null && games.hasGameAtTable(table.id())) {
+            // Not the same as the check above: a player who sat down in a free seat after a
+            // hand was dealt isn't in it, but the table is still busy. Opening here would lay
+            // the mat under piles that were placed at the bare felt's height, so the cards
+            // would sink into it.
+            messages.send(p, "bet.table-busy");
+            return;
+        }
         if (s == null) {
             s = new BetSession(table.id(), p.getUniqueId());
+            // The mat goes down FIRST: potLocation lifts the heap by the mat's thickness, so
+            // a renderer built before the mat exists puts the pot inside it.
+            tables.showMat(table);
             s.setRenderer(new PotRenderer(plugin, potLocation(table), table.yaw()));
             byTable.put(table.id(), s);
+            // Anyone who had said they were up for a friendly hand has to say so again now
+            // that there is money on it. Consent to a casual game is not consent to a wager.
+            games.clearReady(table.id());
             redraw(s);
             broadcast(s, messages.get("bet.opened", "player", p.getName()));
-            broadcast(s, messages.get("bet.opened-hint"));
+            // The how-to goes to the host; everyone else gets the button that buys them in.
+            messages.send(p, hint("bet.opened-hint"));
+            invite(table, p.getUniqueId());
             log.note("OPEN", table.id(), "host=" + p.getName() + " (" + p.getUniqueId() + ")");
             armAnteTimeout(s);
             return;
@@ -150,12 +240,89 @@ public final class BetManager implements Listener, GameManager.GameListener {
             return;
         }
         if (s.isLive(p.getUniqueId())) {
-            messages.send(p, "bet.youre-in");
+            messages.send(p, hint("bet.youre-in"));
             return;
         }
         // Not live yet — you're only in the bet once something of yours is in the pot.
-        messages.send(p, "bet.bet-open");
+        messages.send(p, hint("bet.bet-open"));
         showPot(p);
+    }
+
+    /**
+     * Tell the rest of the table a bet just opened, with the button that buys them in.
+     *
+     * <p>Everyone but the host, who is already looking at the pot they opened.
+     */
+    private void invite(UnoTable table, UUID host) {
+        Component button = messages.button("bet.join-button", "/gamble");
+        for (UUID id : tables.seatedPlayersAt(table.id())) {
+            Player other = id.equals(host) ? null : Bukkit.getPlayer(id);
+            if (other != null) {
+                messages.send(other, "bet.invited", "player", name(host), "join", button);
+            }
+        }
+    }
+
+    /**
+     * Stake currency: {@code /gamble <amount>}, which also opens the ante if there isn't one.
+     *
+     * <p><strong>The money leaves the balance before the stake is recorded, in that order.</strong>
+     * The reverse would have a crash in the gap hand back money that was never actually paid,
+     * and minting currency out of a power cut is a far worse failure than the vanishing chance
+     * of losing one stake to it. Once recorded, escrow is written synchronously — from that
+     * instant the wager survives a {@code kill -9}.
+     */
+    private void stakeMoney(Player p, double amount) {
+        if (!settings.moneyEnabled()) {
+            messages.send(p, "bet.money-disabled");
+            return;
+        }
+        if (!economy.available()) {
+            messages.send(p, "bet.no-economy");
+            return;
+        }
+        if (sessionAt(p) == null) {
+            open(p);  // `/gamble 500` at a table with no bet on it opens one and joins it
+            if (sessionAt(p) == null) {
+                return; // open() already said why — don't follow it with "no bet running"
+            }
+        }
+        BetSession s = anteSessionFor(p);
+        if (s == null) {
+            return;
+        }
+        UUID id = p.getUniqueId();
+        if (s.isReady(id)) {
+            messages.send(p, "bet.locked-in");
+            return;
+        }
+        double cap = settings.maxPotMoney();
+        if (cap > 0 && s.potMoney() + amount > cap) {
+            messages.send(p, "bet.money-limit", "limit", economy.format(cap));
+            return;
+        }
+        if (!economy.has(p, amount)) {
+            messages.send(p, "bet.money-short",
+                    "amount", economy.format(amount),
+                    "balance", economy.format(economy.balanceOf(p)));
+            return;
+        }
+        if (!economy.withdraw(p, amount)) {
+            messages.send(p, "bet.money-failed");
+            return;
+        }
+        s.stakeMoney(id, amount);
+        escrow.hold(id, s.stakeOf(id));
+        log.record("STAKE", s.tableId(), id, p.getName(), Stake.ofMoney(amount),
+                "pot=" + potDescription(s));
+
+        fx.staked(potLocation(tableOf(s)));
+        broadcast(s, messages.get("bet.staked-money",
+                "player", p.getName(),
+                "money", economy.format(amount),
+                "pot", potLabel(s)));
+        redraw(s);
+        stakeHint(p, s);
     }
 
     private void ready(Player p) {
@@ -169,10 +336,14 @@ public final class BetManager implements Listener, GameManager.GameListener {
             messages.send(p, "bet.stake-first");
             return;
         }
-        int staked = EscrowStore.count(s.stakeOf(id));
-        if (!isRider && staked < settings.minAnteItems()) {
-            messages.send(p, "bet.min-ante",
-                    "min", settings.minAnteItems(), "staked", staked);
+        Stake staked = s.stakeOf(id);
+        if (!isRider && !meetsMinimum(staked)) {
+            // Two wordings, because quoting a money minimum on a server with no economy is
+            // telling the player about a door that isn't there.
+            messages.send(p, moneyAllowed() ? "bet.min-ante-money" : "bet.min-ante",
+                    "min", settings.minAnteItems(),
+                    "staked", staked.itemCount(),
+                    "money", economy.format(settings.minAnteMoney()));
             return;
         }
         if (s.isReady(id)) {
@@ -186,6 +357,22 @@ public final class BetManager implements Listener, GameManager.GameListener {
         if (s.allReady()) {
             startHand(s);
         }
+    }
+
+    /**
+     * Is this stake big enough to lock in?
+     *
+     * <p>Either minimum will do. They are separate figures because they are separate
+     * currencies — requiring both would mean a player who wanted to bet cash had to find an
+     * item to go with it, and holding a pure-money stake to the item minimum would refuse it
+     * outright.
+     */
+    private boolean meetsMinimum(Stake stake) {
+        if (stake.isEmpty()) {
+            return false;
+        }
+        return stake.itemCount() >= settings.minAnteItems()
+                || (stake.hasMoney() && stake.money() >= settings.minAnteMoney());
     }
 
     /** Pull out of the ante and take your stake back. Only legal before the hand starts. */
@@ -217,13 +404,18 @@ public final class BetManager implements Listener, GameManager.GameListener {
             return;
         }
         messages.send(p, "bet.pot-header", "items", s.potSize(), "stakers", s.stakers().size());
+        if (s.potMoney() > 0) {
+            messages.send(p, "bet.pot-money", "money", economy.format(s.potMoney()));
+        }
         for (UUID staker : s.stakers()) {
             Component status = messages.get(s.isLive(staker)
                     ? (s.isReady(staker) ? "bet.pot-status-ready" : "bet.pot-status-anteing")
                     : "bet.pot-status-out");
+            Stake stake = s.stakeOf(staker);
             messages.send(p, "bet.pot-entry",
                     "player", name(staker),
-                    "items", EscrowStore.count(s.stakeOf(staker)),
+                    "items", stake.itemCount(),
+                    "money", stake.hasMoney() ? economy.format(stake.money()) : "-",
                     "status", status);
         }
         if (s.state() == BetSession.State.PLAYING) {
@@ -341,15 +533,17 @@ public final class BetManager implements Listener, GameManager.GameListener {
         event.getItemDrop().remove();
         s.stake(id, stack);
         escrow.hold(id, s.stakeOf(id));
-        log.record("STAKE", s.tableId(), id, p.getName(), List.of(stack), "pot=" + s.potSize());
+        log.record("STAKE", s.tableId(), id, p.getName(), Stake.ofItem(stack),
+                "pot=" + potDescription(s));
 
         fx.staked(potLocation(tableOf(s)));
         broadcast(s, messages.get("bet.staked",
                 "player", p.getName(),
                 "amount", stack.getAmount(),
                 "item", prettyName(stack),
-                "pot", s.potSize()));
+                "pot", potLabel(s)));
         redraw(s);
+        stakeHint(p, s);
     }
 
     /** UNO's own cards / table items must never end up in a pot. */
@@ -399,8 +593,8 @@ public final class BetManager implements Listener, GameManager.GameListener {
         s.setState(BetSession.State.PLAYING);
         s.nextHand();
         byGame.put(gameId, s.tableId());
-        broadcast(s, messages.get("bet.on-the-line", "items", s.potSize()));
-        log.note("DEAL", s.tableId(), "hand=" + s.handNumber() + " pot=" + s.potSize()
+        broadcast(s, messages.get("bet.on-the-line", "pot", potLabel(s)));
+        log.note("DEAL", s.tableId(), "hand=" + s.handNumber() + " pot=" + potDescription(s)
                 + " players=" + humans.size() + " bots=" + s.botCount());
         redraw(s);
     }
@@ -418,10 +612,11 @@ public final class BetManager implements Listener, GameManager.GameListener {
         if (s == null || !s.isLive(player)) {
             return;
         }
-        int lost = EscrowStore.count(s.stakeOf(player));
+        Stake lost = s.stakeOf(player);
         s.forfeit(player);
-        broadcast(s, messages.get("bet.forfeit", "player", name(player), "items", lost));
-        log.record("FORFEIT", s.tableId(), player, name(player), s.stakeOf(player),
+        broadcast(s, messages.get("bet.forfeit", "player", name(player),
+                "stake", stakeLabel(lost)));
+        log.record("FORFEIT", s.tableId(), player, name(player), lost,
                 "stake stays in the pot");
         redraw(s);
     }
@@ -450,7 +645,7 @@ public final class BetManager implements Listener, GameManager.GameListener {
             close(s);
             return;
         }
-        if (!settings.rideEnabled() || s.potSize() == 0) {
+        if (!settings.rideEnabled() || s.pot().isEmpty()) {
             payout(s, winner);
             return;
         }
@@ -462,18 +657,18 @@ public final class BetManager implements Listener, GameManager.GameListener {
     /** Winner's choice: take the pot, or leave it all in for another hand. */
     private void offerRide(BetSession s, UUID winner) {
         int seconds = settings.rideWindowSeconds();
-        int pot = s.potSize();
-        broadcast(s, messages.get("bet.ride-won", "player", name(winner), "items", pot));
+        Component pot = potLabel(s);
+        broadcast(s, messages.get("bet.ride-won", "player", name(winner), "pot", pot));
         redraw(s);
 
         Player w = Bukkit.getPlayer(winner);
         if (w != null) {
-            w.sendMessage(messages.get("bet.ride-offer", "items", pot)
+            w.sendMessage(messages.get("bet.ride-offer", "pot", pot)
                     .append(button(messages.get("bet.ride-cash-button"), NamedTextColor.GREEN,
-                            "/gamble cash", messages.get("bet.ride-cash-tip", "items", pot)))
+                            "/gamble cash", messages.get("bet.ride-cash-tip", "pot", pot)))
                     .append(Component.text("  "))
                     .append(button(messages.get("bet.ride-ride-button"), NamedTextColor.RED,
-                            "/gamble ride", messages.get("bet.ride-ride-tip", "items", pot))));
+                            "/gamble ride", messages.get("bet.ride-ride-tip", "pot", pot))));
             messages.send(w, "bet.ride-window", "seconds", seconds);
         }
         s.setTimer(plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
@@ -506,7 +701,7 @@ public final class BetManager implements Listener, GameManager.GameListener {
                 escrow.release(staker);
             }
         }
-        escrow.hold(p.getUniqueId(), s.potItems());
+        escrow.hold(p.getUniqueId(), s.pot());
 
         s.live().clear();
         s.live().add(p.getUniqueId());
@@ -515,10 +710,10 @@ public final class BetManager implements Listener, GameManager.GameListener {
         s.setState(BetSession.State.ANTE);
 
         int challenge = settings.rideChallengeSeconds();
-        broadcast(s, messages.get("bet.rides", "player", p.getName(), "items", s.potSize()));
+        broadcast(s, messages.get("bet.rides", "player", p.getName(), "pot", potLabel(s)));
         broadcast(s, messages.get("bet.match-it", "seconds", challenge));
         fx.letItRide(potLocation(tableOf(s)));
-        log.note("RIDE", s.tableId(), "rider=" + p.getName() + " pot=" + s.potSize());
+        log.note("RIDE", s.tableId(), "rider=" + p.getName() + " pot=" + potDescription(s));
         redraw(s);
         UUID rider = p.getUniqueId();
         s.setTimer(plugin.getServer().getScheduler().runTaskLater(plugin,
@@ -581,14 +776,14 @@ public final class BetManager implements Listener, GameManager.GameListener {
 
     /** Settle: the whole pot changes hands and the session closes. */
     private void payout(BetSession s, UUID winner) {
-        List<ItemStack> pot = s.potItems();
+        Stake pot = s.pot();
+        Component label = potLabel(s);
         for (UUID staker : s.stakers()) {
             escrow.release(staker);
         }
         escrow.payTo(winner, pot);
         log.record("PAYOUT", s.tableId(), winner, name(winner), pot, "hand=" + s.handNumber());
-        broadcast(s, messages.get("bet.collects",
-                "player", name(winner), "items", EscrowStore.count(pot)));
+        broadcast(s, messages.get("bet.collects", "player", name(winner), "pot", label));
         fx.jackpot(potLocation(tableOf(s)), Bukkit.getPlayer(winner));
         close(s);
     }
@@ -596,7 +791,7 @@ public final class BetManager implements Listener, GameManager.GameListener {
     // =====================================================================  refunds
 
     private void refund(BetSession s, UUID player, String action) {
-        List<ItemStack> back = s.withdraw(player);
+        Stake back = s.withdraw(player);
         if (!back.isEmpty()) {
             log.record(action, s.tableId(), player, name(player), back, "returned");
         }
@@ -610,6 +805,17 @@ public final class BetManager implements Listener, GameManager.GameListener {
     }
 
     private void close(BetSession s) {
+        close(s, true);
+    }
+
+    /**
+     * Settle a session and take the table back to normal.
+     *
+     * <p>{@code prompt} is false only on shutdown: offering "play again" to a table the
+     * server is in the middle of stopping is noise at best, and the click would land on a
+     * plugin that has already torn its commands down.
+     */
+    private void close(BetSession s, boolean prompt) {
         s.cancelTimer();
         if (s.renderer() != null) {
             s.renderer().remove();
@@ -618,6 +824,12 @@ public final class BetManager implements Listener, GameManager.GameListener {
             byGame.remove(s.gameId());
         }
         byTable.remove(s.tableId());
+        // The mat is what says "this table is playing for keeps". The pot is gone, so it is
+        // an ordinary table again and has to look like one.
+        tables.hideMat(s.tableId());
+        if (prompt) {
+            tables.promptModeAt(s.tableId(), "table.again");
+        }
     }
 
     /** Everyone pulled out during the ante — don't leave a ghost session holding the table. */
@@ -705,28 +917,75 @@ public final class BetManager implements Listener, GameManager.GameListener {
     public void onQuit(PlayerQuitEvent event) {
         UUID id = event.getPlayer().getUniqueId();
         for (BetSession s : new ArrayList<>(byTable.values())) {
-            if (s.state() == BetSession.State.ANTE && s.isLive(id)) {
-                if (id.equals(s.rideWinner())) {
-                    // The rider left mid-challenge. The pot they won is already theirs on
-                    // paper, but anything a challenger staked to match them is NOT — no hand
-                    // was played for it. Hand that back before settling, or quitting at the
-                    // right moment is a way to take other people's items.
-                    s.cancelTimer();
-                    for (UUID staker : new ArrayList<>(s.stakers())) {
-                        if (!staker.equals(id)) {
-                            refund(s, staker, "REFUND");
-                        }
-                    }
-                    payout(s, id);
-                    return;
-                }
-                refund(s, id, "REFUND");
-                broadcast(s, messages.get("bet.left-before-deal", "player", event.getPlayer().getName()));
-                redraw(s);
-                closeIfEmpty(s);
+            if (s.isLive(id) && leaveAnte(s, id, event.getPlayer().getName())) {
                 return;
             }
         }
+    }
+
+    /**
+     * A player got up from the table: {@code /uno leave}, shift, or a disconnect.
+     *
+     * <p>Wired as half of the table layer's stand-up hook, alongside the game layer's forfeit.
+     * <strong>Standing up during an ante has to settle the ante</strong>, and the game layer
+     * cannot do it: no hand has been dealt yet, so {@code GameManager.forfeit} finds nothing to
+     * forfeit and returns quietly. Without this the player walks off and their stake, the pot
+     * display and the mat stay on a table nobody is sitting at until the ante times out —
+     * while doing the exact same thing by pulling the plug refunded them, because
+     * {@link #onQuit} always handled it. Two ways out of the same chair must cost the same.
+     *
+     * <p>Mid-hand there is nothing to do here: the forfeit rule applies and the stake stays in
+     * the pot, which the hand's own {@link #onForfeit} has already recorded.
+     */
+    public void onStandUp(Player player, UUID tableId) {
+        BetSession s = byTable.get(tableId);
+        if (s == null || s.state() != BetSession.State.ANTE) {
+            return;
+        }
+        if (s.isLive(player.getUniqueId())) {
+            leaveAnte(s, player.getUniqueId(), player.getName());
+            return;
+        }
+        // They had nothing in the pot — but they may have been the one who opened it, and the
+        // last person at the table. An ante with no stake in it and nobody sitting at it is
+        // just a mat and a timer, so take it down rather than making the table wait one out.
+        if (s.live().isEmpty() && tables.seatedPlayersAt(tableId).isEmpty()) {
+            broadcast(s, messages.get("bet.abandoned"));
+            log.note("ABANDON", tableId, "everyone left the table before anything was staked");
+            close(s);
+        }
+    }
+
+    /**
+     * Pull one player out of an open ante and hand their stake back.
+     *
+     * <p>Shared by disconnecting and by standing up, deliberately — see {@link #onStandUp}.
+     *
+     * @return true if this session was the one they were in, so the caller can stop looking.
+     */
+    private boolean leaveAnte(BetSession s, UUID id, String name) {
+        if (s.state() != BetSession.State.ANTE || !s.isLive(id)) {
+            return false;
+        }
+        if (id.equals(s.rideWinner())) {
+            // The rider left mid-challenge. The pot they won is already theirs on paper, but
+            // anything a challenger staked to match them is NOT — no hand was played for it.
+            // Hand that back before settling, or leaving at the right moment is a way to take
+            // other people's items.
+            s.cancelTimer();
+            for (UUID staker : new ArrayList<>(s.stakers())) {
+                if (!staker.equals(id)) {
+                    refund(s, staker, "REFUND");
+                }
+            }
+            payout(s, id);
+            return true;
+        }
+        refund(s, id, "REFUND");
+        broadcast(s, messages.get("bet.left-before-deal", "player", name));
+        redraw(s);
+        closeIfEmpty(s);
+        return true;
     }
 
     /**
@@ -739,9 +998,9 @@ public final class BetManager implements Listener, GameManager.GameListener {
      */
     public void shutdown() {
         for (BetSession s : new ArrayList<>(byTable.values())) {
-            log.note("SHUTDOWN", s.tableId(), "pot=" + s.potSize()
+            log.note("SHUTDOWN", s.tableId(), "pot=" + potDescription(s)
                     + " held in escrow, returned on next join");
-            close(s);
+            close(s, false);
         }
         log.shutdown();
     }
@@ -752,15 +1011,47 @@ public final class BetManager implements Listener, GameManager.GameListener {
         if (s.renderer() == null) {
             return;
         }
+        Component pot = potLabel(s);
         Component label = switch (s.state()) {
-            case ANTE -> messages.get("bet.pot-label-ante", "items", s.potSize(),
+            case ANTE -> messages.get("bet.pot-label-ante", "pot", pot,
                     "ready", s.readyCount(), "live", s.live().size());
-            case PLAYING -> messages.get("bet.pot-label-playing", "items", s.potSize(),
+            case PLAYING -> messages.get("bet.pot-label-playing", "pot", pot,
                     "hand", s.handNumber());
-            case RIDE -> messages.get("bet.pot-label-ride", "items", s.potSize(),
+            case RIDE -> messages.get("bet.pot-label-ride", "pot", pot,
                     "player", name(s.rideWinner()));
         };
-        s.renderer().update(s.potItems(), label);
+        s.renderer().update(s.pot(), label);
+    }
+
+    /**
+     * What is on the table, as one phrase: "12 items", "$500", or "12 items and $500".
+     *
+     * <p>Every message that quotes a pot goes through this rather than through an
+     * {@code <items>} count of its own. Half the wagering messages predate money, and the way
+     * they would have gone wrong is by continuing to say "8 items" over a pot that is mostly
+     * cash — technically true, and a lie about what the player is playing for.
+     */
+    private Component potLabel(BetSession s) {
+        return stakeLabel(s.pot());
+    }
+
+    private Component stakeLabel(Stake stake) {
+        boolean items = stake.itemCount() > 0;
+        if (items && stake.hasMoney()) {
+            return messages.get("bet.stake-both", "items", stake.itemCount(),
+                    "money", economy.format(stake.money()));
+        }
+        if (stake.hasMoney()) {
+            return messages.get("bet.stake-money", "money", economy.format(stake.money()));
+        }
+        return messages.get("bet.stake-items", "items", stake.itemCount());
+    }
+
+    /** The same thing for the audit log — plain, greppable, and never the economy's format. */
+    private static String potDescription(BetSession s) {
+        Stake pot = s.pot();
+        return pot.itemCount() + " item(s)"
+                + (pot.hasMoney() ? String.format(java.util.Locale.ROOT, " + %.2f", pot.money()) : "");
     }
 
     /** The session at the player's table, whatever state it's in. */
@@ -804,7 +1095,7 @@ public final class BetManager implements Listener, GameManager.GameListener {
         return tables.table(s.tableId());
     }
 
-    /** Where the heap sits: on the felt at the dealer's end, clear of the card piles. */
+    /** Where the heap sits: on the mat at the dealer's end, clear of the card piles. */
     private Location potLocation(UnoTable table) {
         if (table == null) {
             return null;
@@ -813,7 +1104,9 @@ public final class BetManager implements Listener, GameManager.GameListener {
         double r = Math.toRadians(table.yaw());
         Vector forward = new Vector(-Math.sin(r), 0, Math.cos(r));
         Location at = centre.clone().add(forward.multiply(POT_FORWARD));
-        at.setY(centre.getY() + UnoTable.SURFACE_Y);
+        // On top of the mat, not through it — a pot only ever exists on a table wearing one,
+        // and the lift is the mat's own thickness rather than a number guessed to match it.
+        at.setY(centre.getY() + UnoTable.SURFACE_Y + tables.matLift(table.id()));
         at.setYaw(table.yaw());
         at.setPitch(0f);
         return at;

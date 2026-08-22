@@ -104,8 +104,12 @@ rules:
 #  into the world -- not display entities -- so they save with the chunk and cost nothing
 #  to render.
 #
-#  Hand one out with /uno give casual <theme>, then right-click the ground with it to
-#  build it. Players sit with /uno join.
+#  Hand one out with /uno give <theme>, then right-click the ground with it to build it.
+#  Players sit with /uno join.
+#
+#  There is no separate casino table. EVERY table plays both ways: the people sitting at
+#  it choose, per hand, between a friendly game (/uno ready) and one for stakes
+#  (/uno bet). A table with a pot on it wears the "Let It Ride" mat until it settles.
 #
 #  Every table has four stairs, so max-players cannot go above 4.
 #
@@ -127,9 +131,9 @@ tables:
 
 # ---- Gambling ("Let It Ride") ----
 #
-#  Players stake items by dropping them onto the table; the winner of the hand takes
-#  the whole pot. Staked items are held in plugins/UNO/escrow/, so a crash or restart
-#  returns them to whoever put them in.
+#  Players stake items by dropping them onto the table, or currency with /gamble <amount>;
+#  the winner of the hand takes the whole pot. Everything staked is held in
+#  plugins/UNO/escrow/, so a crash or restart returns it to whoever put it in.
 gambling:
   enabled: true
 
@@ -157,6 +161,24 @@ gambling:
     blacklist:
       - SHULKER_BOX
       - BUNDLE
+
+  # ---- Money ----
+  #
+  #  Wagering server currency, through Vault: /gamble 500 at a table stakes 500 of it.
+  #
+  #  This needs BOTH Vault and an economy plugin registered with it. With neither, the
+  #  setting below does nothing and tables wager items only -- nothing breaks, and the
+  #  money commands say why. Staked money leaves the player's balance immediately and is
+  #  held in escrow exactly as items are, so a crash refunds it on their next join.
+  money:
+    enabled: true
+
+    # Smallest money stake that counts as an ante on its own. A player meets the ante by
+    # clearing EITHER this or limits.min-ante-items -- they never need both.
+    min-ante: 1.0
+
+    # Largest money pot the table will take. 0 = unlimited.
+    max-pot: 0.0
 
   ride:
     # Offer the winner the choice to leave the pot in for another hand.

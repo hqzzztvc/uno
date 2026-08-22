@@ -46,6 +46,9 @@ public final class Settings {
     private int minAnteItems;
     private boolean blockContainers;
     private List<String> blacklist = List.of();
+    private boolean moneyEnabled;
+    private double minAnteMoney;
+    private double maxPotMoney;
     private boolean rideEnabled;
     private int rideWindowSeconds;
     private int rideChallengeSeconds;
@@ -116,6 +119,10 @@ public final class Settings {
             upper.add(s.trim().toUpperCase(Locale.ROOT));
         }
         blacklist = List.copyOf(upper);
+        moneyEnabled = c.getBoolean("gambling.money.enabled", true);
+        minAnteMoney = Math.max(0.0, c.getDouble("gambling.money.min-ante", 1.0));
+        maxPotMoney = Math.max(0.0, c.getDouble("gambling.money.max-pot", 0.0));
+
         rideEnabled = c.getBoolean("gambling.ride.enabled", true);
         rideWindowSeconds = Math.max(1, c.getInt("gambling.ride.window-seconds", 20));
         rideChallengeSeconds = Math.max(1, c.getInt("gambling.ride.challenge-seconds", 90));
@@ -194,6 +201,27 @@ public final class Settings {
 
     public int minAnteItems() {
         return minAnteItems;
+    }
+
+    /**
+     * Whether currency may be wagered at all.
+     *
+     * <p>Only half the answer — {@code VaultEconomy.available()} is the other half, and both
+     * have to be true. This one is the admin saying "not on my server" even where an economy
+     * plugin is installed.
+     */
+    public boolean moneyEnabled() {
+        return moneyEnabled;
+    }
+
+    /** Smallest money stake that counts as an ante on its own. */
+    public double minAnteMoney() {
+        return minAnteMoney;
+    }
+
+    /** Largest money pot the table will take. 0 = unlimited. */
+    public double maxPotMoney() {
+        return maxPotMoney;
     }
 
     public boolean rideEnabled() {

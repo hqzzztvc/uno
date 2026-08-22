@@ -8,19 +8,20 @@ description: A fully playable multiplayer UNO card game with placeable tables an
 author: ankur
 folia-supported: false
 
-# Table themes may name blocks from these. Soft, and read reflectively, so the plugin
-# builds and runs identically with none of them installed — a theme that names a block
-# they own falls back to the vanilla block written after the pipe in themes.yml.
-softdepend: [ItemsAdder, Oraxen, Nexo]
+# All read reflectively, so the plugin builds and runs identically with none of them
+# installed. ItemsAdder/Oraxen/Nexo: a theme naming a block they own falls back to the
+# vanilla block written after the pipe in themes.yml. Vault: without it (or without an
+# economy registered with it) wagers are items only.
+softdepend: [ItemsAdder, Oraxen, Nexo, Vault]
 
 commands:
   uno:
     description: UNO game & table commands.
-    usage: /uno <help|join|start|give|theme|gamble>
+    usage: /uno <help|join|ready|bet|start|give|theme>
     permission: uno.play
   gamble:
-    description: Wager items on a hand of UNO — winner takes the pot.
-    usage: /gamble [ready|out|pot|go|cancel|ride|cash]
+    description: Wager items or money on a hand of UNO — winner takes the pot.
+    usage: /gamble [<amount>|ready|out|pot|go|cancel|ride|cash]
     aliases: [letitride, ante, bet]
     permission: uno.gamble
 
@@ -32,5 +33,5 @@ permissions:
     description: Allows a player to sit and play at UNO tables.
     default: true
   uno.gamble:
-    description: Allows a player to stake items on a hand of UNO.
+    description: Allows a player to stake items or money on a hand of UNO.
     default: true

@@ -59,11 +59,11 @@ public final class BetLog {
      * @param tableId  the table it happened at
      * @param actor    whose items moved
      * @param actorName their name at the time (UUIDs alone are useless in a dispute)
-     * @param items    the stacks involved (may be empty)
+     * @param stake    what moved — items, money or both (may be empty)
      * @param note     free-text detail, e.g. the pot size
      */
     public void record(String action, UUID tableId, UUID actor, String actorName,
-                       List<ItemStack> items, String note) {
+                       Stake stake, String note) {
         if (!enabled) {
             return;
         }
@@ -71,7 +71,8 @@ public final class BetLog {
                 + " | " + pad(action)
                 + " | table=" + shortId(tableId)
                 + " | player=" + actorName + " (" + actor + ")"
-                + " | items=" + describe(items)
+                + " | items=" + describe(stake.items())
+                + (stake.hasMoney() ? " | money=" + money(stake.money()) : "")
                 + (note == null || note.isEmpty() ? "" : " | " + note)
                 + System.lineSeparator();
         append(line);
@@ -122,6 +123,16 @@ public final class BetLog {
 
     private static String shortId(UUID id) {
         return id == null ? "-" : id.toString().substring(0, 8);
+    }
+
+    /**
+     * The raw figure, to two places — deliberately NOT the economy's own formatting.
+     *
+     * <p>This file is evidence. "$1.2k" is unreadable as a ledger and unparseable by whatever
+     * an admin greps it with; the currency symbol tells a dispute nothing the amount doesn't.
+     */
+    private static String money(double amount) {
+        return String.format(java.util.Locale.ROOT, "%.2f", amount);
     }
 
     private static String describe(List<ItemStack> items) {

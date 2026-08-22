@@ -2,6 +2,7 @@ package com.unoplugin.util;
 
 import net.kyori.adventure.audience.Audience;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
@@ -84,6 +85,19 @@ public final class Messages {
             return Component.text("<" + key + ">");
         }
         return MM.deserialize(raw, resolvers(placeholders));
+    }
+
+    /**
+     * A click-to-run chat button: a label from messages.yml, wired to a command built here.
+     *
+     * <p>Pass the result back in as a placeholder value. That is the whole point of it being
+     * a {@link Component}: {@link #get} inserts plain values <em>unparsed</em>, so a player
+     * called {@code <red>oops} can't smuggle a click event into a broadcast — but a Component
+     * placeholder goes in as-is, which is what a button needs. The command string is always
+     * assembled in Java and never from anything a player typed.
+     */
+    public Component button(String labelKey, String command, Object... placeholders) {
+        return get(labelKey, placeholders).clickEvent(ClickEvent.runCommand(command));
     }
 
     /** True if the message resolves to something worth sending (not blank). */

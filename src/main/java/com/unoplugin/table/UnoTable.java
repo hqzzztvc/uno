@@ -4,15 +4,21 @@ import org.bukkit.Location;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.UUID;
 
 /**
  * A placed UNO table.
  *
- * <p>Holds the logical/persisted state (id, kind, theme, anchor, facing) and computes seat
+ * <p>Holds the logical/persisted state (id, theme, anchor, facing) and computes seat
  * positions from simple table-space math. The blocks it is built from are set into the
  * world by {@link TableManager}, from the {@link TableTheme} named here.
+ *
+ * <p><strong>There is no such thing as a casino table.</strong> There used to be a {@code Kind}
+ * here, and a table was built as one thing or the other for good. That put the decision in
+ * the wrong place and at the wrong time: whether this hand is being played for stakes is
+ * something the four people sitting down decide, in the ten seconds before it is dealt, not
+ * something an admin fixes when they place the furniture. Every table now plays both, and
+ * the {@link TableMat} is what says which one is happening right now.
  *
  * <p>Every table is the same shape — a 3×3 block top with a stair pulled up to the middle of
  * each side — and differs only in the blocks it is made of. Those used to be four materials
@@ -20,41 +26,6 @@ import java.util.UUID;
  * resolved against {@link ThemeStore}, so a server writes its own.
  */
 public class UnoTable {
-
-    /**
-     * What a table is FOR, as opposed to what it looks like.
-     *
-     * <p>Orthogonal to the theme on purpose: a casino table should be able to wear any theme a
-     * casual one can. Only {@link #CASUAL} is implemented — {@link #CASINO} is accepted by the
-     * command grammar and refused, so the syntax players learn now is the final one.
-     */
-    public enum Kind {
-        CASUAL("casual"),
-        CASINO("casino");
-
-        private final String key;
-
-        Kind(String key) {
-            this.key = key;
-        }
-
-        public String key() {
-            return key;
-        }
-
-        public static Kind byKey(String raw) {
-            if (raw == null) {
-                return null;
-            }
-            String needle = raw.toLowerCase(Locale.ROOT);
-            for (Kind k : values()) {
-                if (k.key.equals(needle)) {
-                    return k;
-                }
-            }
-            return null;
-        }
-    }
 
     /**
      * Height of the table surface above {@link #anchor}. Anything that sits ON the table —
@@ -70,7 +41,6 @@ public class UnoTable {
     private static final double SEAT_REACH = 2.0;
 
     private final UUID id;
-    private final Kind kind;
     /**
      * Which theme this table wears, by id.
      *
@@ -102,10 +72,9 @@ public class UnoTable {
     private final List<UUID> entityIds = new ArrayList<>();
     private boolean spawned = false;
 
-    public UnoTable(UUID id, Kind kind, String themeId, Location anchor, float yaw,
+    public UnoTable(UUID id, String themeId, Location anchor, float yaw,
                     int minPlayers, int maxPlayers) {
         this.id = id;
-        this.kind = kind;
         this.themeId = themeId;
         this.anchor = anchor;
         this.yaw = yaw;
@@ -115,8 +84,6 @@ public class UnoTable {
         computeSeats();
         this.occupants = new UUID[seats.size()];
     }
-
-    public Kind kind() { return kind; }
 
     /** The id of the theme this table wears — resolved against {@link ThemeStore} on demand. */
     public String themeId() { return themeId; }

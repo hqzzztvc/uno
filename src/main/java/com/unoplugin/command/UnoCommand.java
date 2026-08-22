@@ -39,8 +39,8 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
             "red_1", "yellow_5", "green_skip", "blue_9", "red_draw2", "wild", "green_3");
 
     private static final List<String> PUBLIC_SUBS = List.of(
-            "help", "version", "join", "leave", "start", "quit", "stop", "gamble",
-            "uno", "callout");
+            "help", "version", "join", "leave", "ready", "bet", "start", "quit", "stop",
+            "gamble", "uno", "callout");
     private static final List<String> ADMIN_SUBS = List.of(
             "give", "theme", "remove", "list", "info", "tp", "end", "refund", "reload", "play");
     private static final List<String> DEBUG_SUBS = List.of(
@@ -89,6 +89,7 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
                     "version", plugin.getPluginMeta().getVersion());
             case "join", "sit" -> join(sender);
             case "leave", "stand" -> leave(sender);
+            case "ready" -> ready(sender);
             case "start" -> start(sender, rest);
             case "quit", "forfeit" -> quit(sender);
             case "stop" -> stop(sender);
@@ -125,6 +126,8 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
     private void help(CommandSender sender) {
         messages.send(sender, "plugin.help-header");
         messages.send(sender, "plugin.help-join");
+        messages.send(sender, "plugin.help-ready");
+        messages.send(sender, "plugin.help-bet");
         messages.send(sender, "plugin.help-leave");
         messages.send(sender, "plugin.help-play");
         messages.send(sender, "plugin.help-quit");
@@ -158,6 +161,28 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         if (player != null) {
             tables.leaveNearest(player);
         }
+    }
+
+    /**
+     * {@code /uno ready} — one word that means "I'm in", whichever kind of hand this is.
+     *
+     * <p>The routing lives here rather than in either manager because the command layer is
+     * the one place that already holds both, and because it is genuinely a routing question:
+     * at a table with a pot open, being ready means your stake is locked in and there is no
+     * such thing as being casually ready alongside it. One button on the prompt, one command
+     * to learn, and the table decides what it means.
+     */
+    private void ready(CommandSender sender) {
+        Player player = asPlayer(sender);
+        if (player == null) {
+            return;
+        }
+        UnoTable table = tables.seatedTable(player.getUniqueId());
+        if (table != null && bets.hasSessionAtTable(table.id())) {
+            bets.command(player, new String[]{"ready"});
+            return;
+        }
+        games.ready(player);
     }
 
     /** Anyone may deal a hand to everyone seated at their table. */
@@ -250,11 +275,11 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
     }
 
     /**
-     * {@code /uno give <casual|casino> <theme>} — hand over a placeable table item.
+     * {@code /uno give <theme>} — hand over a placeable table item.
      *
-     * <p>The kind comes first and the theme second because they are different questions: what
-     * the table is FOR, then what it looks like. Casino is part of the grammar today and
-     * refused at the point of use, so the syntax players learn now is the one that stays.
+     * <p>The kind argument is gone along with the casual/casino split. Every table plays
+     * both, so the only question left about a table you are about to place is what it looks
+     * like.
      */
     private void give(CommandSender sender, String[] args) {
         if (notAdmin(sender)) {
@@ -264,29 +289,20 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         if (player == null) {
             return;
         }
-        if (args.length < 1) {
-            messages.send(player, "table.pick-kind", "kinds", kindList());
-            return;
-        }
-        UnoTable.Kind kind = UnoTable.Kind.byKey(args[0]);
-        if (kind == null) {
-            messages.send(player, "table.unknown-kind", "kinds", kindList());
-            return;
-        }
-        if (kind == UnoTable.Kind.CASINO) {
-            messages.send(player, "table.casino-unimplemented");
-            return;
-        }
-        if (args.length < 2) {
+        // Tolerate the old two-word form: an admin with `/uno give casual oak` in their
+        // muscle memory (or a macro) should get a table, not a lecture.
+        String wanted = args.length > 1 && tables.themes().get(args[0]) == null ? args[1]
+                : (args.length > 0 ? args[0] : null);
+        if (wanted == null) {
             messages.send(player, "table.pick-variant", "variants", tables.themes().idList());
             return;
         }
-        TableTheme theme = tables.themes().get(args[1]);
+        TableTheme theme = tables.themes().get(wanted);
         if (theme == null) {
             messages.send(player, "table.unknown-type", "variants", tables.themes().idList());
             return;
         }
-        tables.giveTableItem(player, kind, theme);
+        tables.giveTableItem(player, theme);
         messages.send(player, "table.given", "variant", theme.displayName());
     }
 
@@ -580,23 +596,6 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         }
     }
 
-    /** Every table kind, for the "which one?" and "no such one" messages. */
-    private static String kindList() {
-        List<String> out = new ArrayList<>();
-        for (UnoTable.Kind k : UnoTable.Kind.values()) {
-            out.add(k.key());
-        }
-        return String.join(", ", out);
-    }
-
-    private static List<String> kindKeys() {
-        List<String> out = new ArrayList<>();
-        for (UnoTable.Kind k : UnoTable.Kind.values()) {
-            out.add(k.key());
-        }
-        return out;
-    }
-
     /** Online player first; otherwise anyone the server has already seen. */
     private UUID resolvePlayer(String name) {
         Player online = Bukkit.getPlayerExact(name);
@@ -639,7 +638,7 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
                     if (!sender.hasPermission("uno.admin")) {
                         return List.of();
                     }
-                    return prefixed(kindKeys(), args[1]);
+                    return prefixed(tables.themes().ids(), args[1]);
                 }
                 case "theme" -> {
                     if (!sender.hasPermission("uno.admin")) {
@@ -686,12 +685,8 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         }
         if (args.length == 3 && sender.hasPermission("uno.admin")) {
             String sub = args[0].toLowerCase(Locale.ROOT);
-            // The theme name is the third word of both /uno give <kind> <theme> and
-            // /uno theme edit|delete <theme>.
-            boolean wantsTheme = sub.equals("give")
-                    || (sub.equals("theme") && (args[1].equalsIgnoreCase("edit")
-                            || args[1].equalsIgnoreCase("delete")));
-            if (wantsTheme) {
+            if (sub.equals("theme") && (args[1].equalsIgnoreCase("edit")
+                    || args[1].equalsIgnoreCase("delete"))) {
                 return prefixed(tables.themes().ids(), args[2]);
             }
         }

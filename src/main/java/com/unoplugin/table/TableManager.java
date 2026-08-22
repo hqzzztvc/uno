@@ -77,8 +77,13 @@ public class TableManager implements Listener {
      * are built below games in the wiring, so this class must not know what a game is.
      */
     public interface StandUpHook {
-        /** @return true if the player was in a hand and has just been dropped from it. */
-        boolean onStandUp(Player player);
+        /**
+         * @param tableId the table they just got up from — passed explicitly because the seat
+         *                bookkeeping is already undone by the time this fires, so the layers
+         *                below can no longer ask which table it was.
+         * @return true if the player was in a hand and has just been dropped from it.
+         */
+        boolean onStandUp(Player player, UUID tableId);
     }
 
     private final UnoPlugin plugin;
@@ -99,18 +104,27 @@ public class TableManager implements Listener {
      * than waiting for someone to sit at it.
      */
     private final Map<Long, List<UnoTable>> byChunk = new HashMap<>();
+    /**
+     * The "Let It Ride" mat, on the tables currently playing for stakes.
+     *
+     * <p>Keyed by table id and owned here rather than by the wagering layer, because it is a
+     * fixture of the table: it has to be taken down when the table is removed and put back
+     * when its chunk reloads, and both of those are this class's job. The bet layer only says
+     * when to lay it and when to lift it.
+     */
+    private final Map<UUID, TableMat> mats = new HashMap<>();
     private final NamespacedKey idKey;       // tags spawned entities with their table id
     private final NamespacedKey vehicleKey;  // tags the invisible seat mount
-    private final NamespacedKey itemKey;     // stamps a table item with kind + theme
+    private final NamespacedKey itemKey;     // stamps a table item with the theme it builds
     private final File dataFile;
     private final ThemeStore themes;
     private final CustomBlocks customBlocks;
 
     private BusyCheck busyCheck = id -> false;
-    private StandUpHook standUpHook = p -> false;
+    private StandUpHook standUpHook = (p, t) -> false;
 
     /** A table we know about but can't build yet, because its world isn't loaded. */
-    private record PendingTable(String key, String kind, String theme, String world,
+    private record PendingTable(String key, String theme, String world,
                                 double x, double y, double z, double yaw) {}
 
     /** Players currently seated, keyed by player id. */
@@ -153,7 +167,7 @@ public class TableManager implements Listener {
 
     /** Wire in "standing up leaves the hand" — the game layer does the forfeit itself. */
     public void setStandUpHook(StandUpHook standUpHook) {
-        this.standUpHook = standUpHook == null ? p -> false : standUpHook;
+        this.standUpHook = standUpHook == null ? (p, t) -> false : standUpHook;
     }
 
     // ---------------------------------------------------------------- lifecycle
@@ -180,29 +194,24 @@ public class TableManager implements Listener {
             if (theme == null) {
                 theme = migrateType(s.getString("type", "CHERRY"));
             }
-            String kind = s.getString("kind", UnoTable.Kind.CASUAL.key());
             double x = s.getDouble("x");
             double y = s.getDouble("y");
             double z = s.getDouble("z");
             double yaw = s.getDouble("yaw");
             try {
                 UUID id = UUID.fromString(key);
-                UnoTable.Kind parsedKind = UnoTable.Kind.byKey(kind);
-                if (parsedKind == null) {
-                    parsedKind = UnoTable.Kind.CASUAL;
-                }
                 World world = Bukkit.getWorld(worldName);
                 if (world == null) {
                     // Multiverse and friends load worlds AFTER plugins enable. Dropping the
                     // table here would have it erased from disk by the next save().
-                    pending.add(new PendingTable(key, kind, theme, worldName, x, y, z, yaw));
+                    pending.add(new PendingTable(key, theme, worldName, x, y, z, yaw));
                     continue;
                 }
-                register(create(parsedKind, theme, id, new Location(world, x, y, z), (float) yaw));
+                register(create(theme, id, new Location(world, x, y, z), (float) yaw));
             } catch (IllegalArgumentException ex) {
                 plugin.getLogger().warning("Bad table entry '" + key + "': " + ex.getMessage()
                         + " — keeping it on file untouched.");
-                pending.add(new PendingTable(key, kind, theme, worldName, x, y, z, yaw));
+                pending.add(new PendingTable(key, theme, worldName, x, y, z, yaw));
             }
         }
         plugin.getLogger().info("Loaded " + tables.size() + " UNO table(s)."
@@ -246,9 +255,7 @@ public class TableManager implements Listener {
                 continue;
             }
             try {
-                UnoTable.Kind kind = UnoTable.Kind.byKey(p.kind());
-                UnoTable table = create(kind == null ? UnoTable.Kind.CASUAL : kind, p.theme(),
-                        UUID.fromString(p.key()),
+                UnoTable table = create(p.theme(), UUID.fromString(p.key()),
                         new Location(event.getWorld(), p.x(), p.y(), p.z()), (float) p.yaw());
                 register(table);
                 it.remove();
@@ -310,6 +317,13 @@ public class TableManager implements Listener {
         for (UnoTable t : List.copyOf(here)) {
             if (event.getWorld().equals(t.anchor().getWorld())) {
                 repairIfNeeded(t);
+                // The mat is a display entity, so unlike the blocks it really did die with
+                // the chunk. spawn() is idempotent — on a table that still has its mat this
+                // is one isValid() check.
+                TableMat mat = mats.get(t.id());
+                if (mat != null) {
+                    mat.spawn();
+                }
             }
         }
     }
@@ -394,7 +408,6 @@ public class TableManager implements Listener {
         for (UnoTable t : tables.values()) {
             Location a = t.anchor();
             String base = "tables." + t.id();
-            yml.set(base + ".kind", t.kind().key());
             yml.set(base + ".theme", t.themeId());
             // The captured name, NOT a.getWorld() — that goes null the moment the world is
             // unloaded at runtime, and an NPE here means tables.yml is never written at all.
@@ -408,7 +421,6 @@ public class TableManager implements Listener {
         // placing one table erases every table in an unloaded world, permanently.
         for (PendingTable p : pending) {
             String base = "tables." + p.key();
-            yml.set(base + ".kind", p.kind());
             yml.set(base + ".theme", p.theme());
             yml.set(base + ".world", p.world());
             yml.set(base + ".x", p.x());
@@ -446,11 +458,16 @@ public class TableManager implements Listener {
             }
         }
         // The blocks stay: they are part of the world now, and a table that survives a
-        // restart is the whole point of building it out of blocks.
+        // restart is the whole point of building it out of blocks. The mat does NOT — it is
+        // a display entity, and one left behind is a decal on a table with no pot on it.
+        for (TableMat mat : mats.values()) {
+            mat.remove();
+        }
+        mats.clear();
     }
 
-    private UnoTable create(UnoTable.Kind kind, String themeId, UUID id, Location anchor, float yaw) {
-        return new UnoTable(id, kind, TableTheme.normaliseId(themeId), anchor, yaw,
+    private UnoTable create(String themeId, UUID id, Location anchor, float yaw) {
+        return new UnoTable(id, TableTheme.normaliseId(themeId), anchor, yaw,
                 settings.tableMinPlayers(), settings.tableMaxPlayers());
     }
 
@@ -467,7 +484,7 @@ public class TableManager implements Listener {
      * on the placer buries them inside their own furniture. An item they aim is also the only
      * way to line a table up with a room they have already built.
      */
-    public PlaceResult placeAt(UnoTable.Kind kind, String themeId, Block clicked, Player player) {
+    public PlaceResult placeAt(String themeId, Block clicked, Player player) {
         World w = clicked.getWorld();
         int limit = settings.maxTablesPerWorld();
         if (limit > 0 && countIn(w) >= limit) {
@@ -489,7 +506,7 @@ public class TableManager implements Listener {
         // Snapped to the player's facing, so the theme's pattern and the seats line up with
         // the way they were standing when they placed it.
         float yaw = snap(player.getLocation().getYaw());
-        UnoTable table = create(kind, themeId, UUID.randomUUID(), anchor, yaw);
+        UnoTable table = create(themeId, UUID.randomUUID(), anchor, yaw);
         if (!footprintClear(table)) {
             return PlaceResult.NO_ROOM;
         }
@@ -549,6 +566,7 @@ public class TableManager implements Listener {
                 }
             }
         }
+        hideMat(table.id());
         clearBlocks(table);
         tables.remove(table.id());
         List<UnoTable> here = byChunk.get(chunkKey(table.anchor()));
@@ -726,6 +744,40 @@ public class TableManager implements Listener {
         return true;
     }
 
+    // -------------------------------------------------------------------- mat
+
+    /**
+     * Lay the "Let It Ride" mat on this table — it is playing for stakes from now on.
+     *
+     * <p>Idempotent, so the wagering layer can call it whenever a session opens without
+     * tracking whether it already did.
+     */
+    public void showMat(UnoTable table) {
+        if (table == null) {
+            return;
+        }
+        mats.computeIfAbsent(table.id(), id -> new TableMat(plugin, table)).spawn();
+    }
+
+    /** Take the mat up — the pot settled, and the table is an ordinary one again. */
+    public void hideMat(UUID tableId) {
+        TableMat mat = mats.remove(tableId);
+        if (mat != null) {
+            mat.remove();
+        }
+    }
+
+    /**
+     * How far above the felt anything sitting ON this table has to be lifted, in blocks.
+     *
+     * <p>Zero for a casual table; the mat's thickness for one playing for stakes. Both card
+     * piles and the pot ask this rather than each deciding for themselves, so there is one
+     * answer and it moves if the mat's geometry ever does.
+     */
+    public double matLift(UUID tableId) {
+        return mats.containsKey(tableId) ? TableMat.THICKNESS : 0.0;
+    }
+
     // ------------------------------------------------------------------ events
 
     // ------------------------------------------------------------------- items
@@ -733,12 +785,12 @@ public class TableManager implements Listener {
     /**
      * The item {@code /uno give} hands out: right-click the ground with it to build the table.
      *
-     * <p>What the item IS matters less than what it carries. The kind and the theme id live in
-     * its persistent data, so a stack that has been through a chest, a hopper and somebody
-     * else's inventory still builds the table it was made for — and a theme renamed in
-     * themes.yml since then is caught at placement time rather than building something wrong.
+     * <p>What the item IS matters less than what it carries. The theme id lives in its
+     * persistent data, so a stack that has been through a chest, a hopper and somebody else's
+     * inventory still builds the table it was made for — and a theme renamed in themes.yml
+     * since then is caught at placement time rather than building something wrong.
      */
-    public ItemStack createTableItem(UnoTable.Kind kind, TableTheme theme) {
+    public ItemStack createTableItem(TableTheme theme) {
         ItemStack item = new ItemStack(Material.OAK_PRESSURE_PLATE);
         ItemMeta meta = item.getItemMeta();
         meta.displayName(Component.text(theme.displayName(), NamedTextColor.GOLD)
@@ -746,29 +798,23 @@ public class TableManager implements Listener {
         meta.lore(List.of(
                 Component.text("Right-click the ground to place.", NamedTextColor.GRAY)
                         .decoration(TextDecoration.ITALIC, false),
-                Component.text(capitalise(kind.key()) + " table · "
-                                + settings.tableMinPlayers() + "-" + settings.tableMaxPlayers()
-                                + " players", NamedTextColor.DARK_GRAY)
+                Component.text("UNO table · " + settings.tableMinPlayers() + "-"
+                                + settings.tableMaxPlayers() + " players · casual or stakes",
+                        NamedTextColor.DARK_GRAY)
                         .decoration(TextDecoration.ITALIC, false)));
-        meta.getPersistentDataContainer().set(itemKey, PersistentDataType.STRING,
-                kind.key() + "/" + theme.id());
+        meta.getPersistentDataContainer().set(itemKey, PersistentDataType.STRING, theme.id());
         meta.addItemFlags(ItemFlag.values());
         item.setItemMeta(meta);
         return item;
     }
 
     /** {@code /uno give} — put a table item in the player's hands. */
-    public void giveTableItem(Player player, UnoTable.Kind kind, TableTheme theme) {
-        Map<Integer, ItemStack> left =
-                player.getInventory().addItem(createTableItem(kind, theme));
+    public void giveTableItem(Player player, TableTheme theme) {
+        Map<Integer, ItemStack> left = player.getInventory().addItem(createTableItem(theme));
         // A full inventory must not silently eat the item — drop it at their feet instead.
         for (ItemStack overflow : left.values()) {
             player.getWorld().dropItemNaturally(player.getLocation(), overflow);
         }
-    }
-
-    private static String capitalise(String s) {
-        return s.isEmpty() ? s : Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
     /**
@@ -799,21 +845,19 @@ public class TableManager implements Listener {
         }
         Player player = event.getPlayer();
 
-        String[] parts = tag.split("/", 2);
-        UnoTable.Kind kind = UnoTable.Kind.byKey(parts[0]);
-        TableTheme theme = parts.length > 1 ? themes.get(parts[1]) : null;
-        if (kind == null || theme == null) {
+        // Items made before tables stopped being casual-or-casino carry "casual/<theme>".
+        // The kind is gone, so take the theme off the back of it rather than refusing an
+        // item somebody has been carrying around in a chest since the last version.
+        String themeId = tag.substring(tag.indexOf('/') + 1);
+        TableTheme theme = themes.get(themeId);
+        if (theme == null) {
             // The theme was deleted or renamed since the item was made. Say so rather than
             // quietly building something else — the player chose this look on purpose.
             messages.send(player, "table.item-stale");
             return;
         }
-        if (kind == UnoTable.Kind.CASINO) {
-            messages.send(player, "table.casino-unimplemented");
-            return;
-        }
 
-        switch (placeAt(kind, theme.id(), clicked, player)) {
+        switch (placeAt(theme.id(), clicked, player)) {
             case OK -> {
                 if (player.getGameMode() != GameMode.CREATIVE) {
                     item.setAmount(item.getAmount() - 1);
@@ -1008,6 +1052,37 @@ public class TableManager implements Listener {
 
         messages.send(player, "table.sit");
         fx.seat(player, true);
+        promptMode(player, "table.choose");
+    }
+
+    /**
+     * Ask a seated player how they want to play: a friendly hand, or one for stakes.
+     *
+     * <p>This is the whole front door. Sitting down used to leave a player holding two
+     * commands they had to already know ({@code /uno start}, {@code /gamble}); now the two
+     * choices arrive as buttons the moment they sit, and again when a hand finishes. Nothing
+     * here knows what a game or a pot IS — the buttons run commands, and the command layer
+     * routes them — so this stays below both in the wiring, like {@link BusyCheck}.
+     */
+    public void promptMode(Player player, String headerKey) {
+        Component ready = messages.button("table.choose-ready-button", "/uno ready");
+        if (!settings.gamblingEnabled() || !player.hasPermission("uno.gamble")) {
+            // No point offering a door the player can't walk through.
+            messages.send(player, headerKey + "-casual", "ready", ready);
+            return;
+        }
+        messages.send(player, headerKey, "ready", ready,
+                "bet", messages.button("table.choose-bet-button", "/uno bet"));
+    }
+
+    /** The same offer, to everyone still sitting at a table — used when a hand finishes. */
+    public void promptModeAt(UUID tableId, String headerKey) {
+        for (UUID id : seatedPlayersAt(tableId)) {
+            Player p = Bukkit.getPlayer(id);
+            if (p != null) {
+                promptMode(p, headerKey);
+            }
+        }
     }
 
     private void leaveSeat(Player player) {
@@ -1036,7 +1111,7 @@ public class TableManager implements Listener {
         //
         // The seat bookkeeping above is finished first on purpose: the forfeit broadcasts to
         // everyone at the table and can end the hand outright, and both walk `seated`.
-        if (standUpHook.onStandUp(player)) {
+        if (standUpHook.onStandUp(player, s.tableId())) {
             messages.send(player, "table.stand-forfeit");
         }
     }

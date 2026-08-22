@@ -22,7 +22,8 @@ session that has been idle.
 
 A Paper server plugin (`com.unoplugin`) that implements a fully playable multiplayer UNO game inside
 Minecraft: a placeable table with stair seats in nine themes (or any an admin builds), a card fan
-held in the player's hand, in-world draw/discard piles, and an item-wagering mode ("Let It Ride").
+held in the player's hand, in-world draw/discard piles, and a wagering mode ("Let It Ride") that
+stakes items, Vault currency, or both.
 
 Two halves that must stay in sync:
 
@@ -98,6 +99,7 @@ Neither `assets/uno/` nor the pack's `sides.png` is hand-edited — regenerate i
 cd resourcepack
 python3 generate_card_models.py   # all 4 card families from uno_json/ + uno:<card> item defs
 python3 generate_held_fan.py      # the ~6800-file uno:held composite fan (models/item/held/)
+python3 generate_table_mat.py     # uno:letitride_mat, the flat "Let It Ride" table mat
 ```
 
 - `generate_card_models.py` **bakes the rotations into the geometry** rather than rotating at
@@ -135,6 +137,18 @@ python3 generate_held_fan.py      # the ~6800-file uno:held composite fan (model
   command; it is not part of gameplay. All five `CardTester`/fan debug commands require both
   `uno.admin` **and** `debug: true` in config.yml — they spawn per-tick display entities and have no
   business on a live server.
+- `generate_table_mat.py` is the **one exception to "assets/uno/ is never hand-authored"**, at
+  both ends. Its source, `assets/uno/models/item/letitride.json`, is a Blockbench export of the
+  logo that lives in the pack rather than in `uno_json/` (the other dev put it there, and
+  `generate_card_models.py` would treat anything in `uno_json/` as a card). Its output,
+  `uno:letitride_mat`, is that quad **baked lying flat** — X/Z centred on 8 and the *underside*
+  at y=8, the same trick the deck models play, so the mat spawns flush on the felt with no
+  rotation and at any scale. `TableMat.THICKNESS` is derived from that 0.5-unit thickness and
+  the display scale, and is what the card piles and the pot are lifted by; don't re-type the
+  number anywhere else. The +90° about X also leaves the logo's top edge pointing at local +Z,
+  which is the table's far side — so it reads right way up from seat 0, the side the table was
+  placed from. It imports the rotation helpers from `generate_card_models.py`, so run that
+  script's own regeneration first if `sides.png` has moved.
 - `generate_card_font.py` is **dead code** — an abandoned HUD-font approach. Its outputs
   (`assets/uno/font/`, `assets/uno/textures/font/`) are not in the pack and `HandFont.java` was deleted.
 - **The fan's card is a flat two-face quad, and that is deliberate.** The fan briefly parented the
@@ -159,6 +173,7 @@ all generated from the one Blockbench export in `uno_json/`:
 | `uno:<card>` | upright, face on +Z, bottom-centre at the origin | `CardTester` debug fan (`debug: true` only) |
 | `uno:flat_<card>` / `uno:down_<card>` | lying flat, face-up / face-down | `PileRenderer` (discard pile) |
 | `uno:deck_10` / `deck_50` / `deck_100` | the draw pile as one solid block of cards | `PileRenderer` (draw pile) |
+| `uno:letitride_mat` | the flat 32×32 mat, underside at y=8 | `TableMat` (a table playing for stakes) |
 | *(no item)* `uno:item/cards_held/<card>` | upright, pivot on (8,8,8), rims stripped | nothing — see the fan note above |
 | `uno:held` | one composite item, 21 select-slots | `HandManager` (the held fan; inlines its own flat quad) |
 
@@ -186,6 +201,11 @@ command/  UnoCommand (routing + permissions + tab completion), GambleCommand
 
 `BusyCheck` is why a table can't be removed out from under a running hand: `UnoPlugin` wires it to
 `gameManager.hasGameAtTable(id) || betManager.hasSessionAtTable(id)`.
+
+**Every table plays both ways.** There is no casino table and no `UnoTable.Kind` any more — the
+choice between a friendly hand and one for stakes belongs to the four people sitting down, in the
+ten seconds before the deal, not to the admin who placed the furniture. See "Sitting down, and
+what happens next" below.
 
 - **`UnoGame`** is pure rules — hands, deck, turn order, direction, active colour, legality, win.
   **Zero Bukkit imports** (that's what makes it testable); it resolves names through an injected
@@ -325,12 +345,12 @@ quietly hand every legacy table a different wood. `TableThemeTest` reads `builtI
 rather than a copy of the id list, so renaming a shipped theme without fixing the migration fails
 the build instead of retexturing somebody's table.
 
-`UnoTable` now carries a **theme id string plus a `Kind`** (`CASUAL` / `CASINO`), not a variant
-enum. Kind is orthogonal to theme on purpose: a casino table should be able to wear any theme a
-casual one can. Only `CASUAL` is implemented; `CASINO` is accepted by the command grammar and
-refused at the point of use, so the syntax players learn now is the final one. The theme is held
-**by id, not by resolved theme**, because `themes.yml` is re-read on `/uno reload` and an edited
-theme has to reach the tables already standing.
+`UnoTable` carries a **theme id string** and nothing else about what it is for. The `Kind`
+(`CASUAL` / `CASINO`) that used to sit beside it is **gone**: it put the casual-vs-stakes decision
+in the wrong place (an admin, at placement) and made it permanent, when it is really a per-hand
+decision made by whoever is sitting there. The theme is held **by id, not by resolved theme**,
+because `themes.yml` is re-read on `/uno reload` and an edited theme has to reach the tables
+already standing.
 
 - **The table is REAL BLOCKS set into the world, not display entities.** `TableManager.buildBlocks`
   lays nine top blocks and four stairs. This is the whole reason the chunk-index machinery is gone:
@@ -376,22 +396,76 @@ theme has to reach the tables already standing.
 - `tables.yml` rows written by older builds say `type: CASINO`. Load reads `theme` first and falls
   back to `type` through `ThemeStore.migrateLegacyId`, and the row is rewritten with a theme id on
   the next save. Rejecting unknown names instead strands them in `pending` and leaves a dead entry
-  on disk that no command can reach.
+  on disk that no command can reach. A `kind:` key from the Kind era is read and dropped the same
+  way, and stops being written.
 - `register()` re-lays a table's blocks **only if they are missing**. That is what makes the
   entity→block migration and a bulldozed table both self-healing, and it is why a normal restart
   rebuilds nothing.
-- **The placeable table item is back**, and it is how tables are made now: `/uno give <kind>
-  <theme>` hands over an item, and right-clicking the ground with it calls `placeAt` on the block
+- **The placeable table item is back**, and it is how tables are made now: `/uno give <theme>`
+  hands over an item, and right-clicking the ground with it calls `placeAt` on the block
   above the one clicked. Where they aim, not where they stand — a 3×3 with seats 2 out centred on
   the placer buries them in their own furniture, and an aimed item is the only way to line a table
   up with a room already built. The item is an `OAK_PRESSURE_PLATE`, so `onInteract` **must** cancel
-  the event before anything else or a real pressure plate goes down beside the table. Kind and theme
-  live in the item's PDC, so a stack that has been through a chest still builds what it says; a
-  theme deleted since then is caught at placement rather than quietly building something else.
-  `/uno createtable` is **gone**.
+  the event before anything else or a real pressure plate goes down beside the table. The theme id
+  lives in the item's PDC, so a stack that has been through a chest still builds what it says; a
+  theme deleted since then is caught at placement rather than quietly building something else. An
+  item stamped `casual/<theme>` by the Kind-era build still places — `onInteract` takes the theme
+  off the back of the tag — and `/uno give casual oak` is still accepted, because an admin's
+  muscle memory shouldn't cost them a table. `/uno createtable` is **gone**.
 - `onBlockBreak` protects a live table's 13 positions from everyone without `uno.admin`, since the
   blocks are now real and mineable. Admins are deliberately let through — which also means an admin
   testing will mine their own table and see it come back on the next restart.
+
+### The "Let It Ride" mat
+
+A table with a live pot wears `TableMat`: one non-persistent `ItemDisplay` showing
+`uno:letitride_mat`, laid **2.9 blocks across a 3-block top** — inset a tenth of a block so it
+reads as something lying *on* the table rather than as a retexture of it, and so its edge doesn't
+overhang thin air when you look from the side.
+
+- **`TableManager` owns the mats, not the bet layer.** They have to come up when a table is
+  removed and go back when a chunk reloads, and both of those are the table layer's job. The bet
+  layer only says *when*: `showMat` on opening an ante, `hideMat` in `close()`. `showMat`/`spawn()`
+  are idempotent, which is what lets `onChunkLoad` call it blind — on a table that still has its
+  mat it costs one `isValid()`.
+- **Everything on a wagered table is lifted by `TableMat.THICKNESS`.** `GameManager.launch` asks
+  `tableManager.matLift(tableId)` for the card piles and `BetManager.potLocation` asks for the pot;
+  neither has its own number. The constant is derived from the model's 0.5-unit thickness and the
+  display scale, so moving the geometry moves the piles with it.
+- **Order matters in `BetManager.open`:** the mat goes down *before* the `PotRenderer` is built,
+  because `potLocation` adds the lift. Build the renderer first and the pot sits inside the mat.
+- `open()` refuses at a table with a hand already running (`bet.table-busy`). Not the same check as
+  "are you in a game" — a player who sat in a free seat mid-hand isn't in it, and letting them open
+  an ante would slide the mat under piles already placed at the bare felt's height.
+
+### Sitting down, and what happens next
+
+The whole front door is two buttons. `TableManager.sit` sends `table.choose` —
+**[ READY ]** and **[ FOR STAKES ]** — and `promptModeAt` sends `table.again` to everyone still
+seated when a hand finishes. Nothing in `TableManager` knows what a game or a pot is: the buttons
+run commands, and `UnoCommand` routes them.
+
+- **`/uno ready` means "I'm in", whichever kind of hand this is.** `UnoCommand.ready` sends it to
+  `BetManager` if there is a session at the table and to `GameManager` otherwise. That routing lives
+  in the command layer because it is the one place that already holds both managers, and because
+  there is no such thing as being casually ready at a table with a pot on it.
+- **A casual hand deals itself.** `GameManager.ready` collects a per-table set and deals the moment
+  it matches the seated list and clears `minPlayers`. That deletes the step where everyone waited
+  for the one person who knew to type `/uno start`. `/uno start` still exists as the deal-now
+  override for a table that won't wait for an AFK friend, and is what the `[ DEAL NOW ]` button in
+  `game.ready-waiting` runs.
+- `ready()` reconciles the set against `seatedPlayersAt` on every call, so a stale entry from
+  someone who stood up can't trip the deal; standing up also clears it outright, through
+  `GameManager.onStandUp` (the table's stand-up hook, which now does the ready withdrawal *and*
+  the forfeit).
+- **Opening a bet clears the casual readiness at that table** (`games.clearReady`). Consent to a
+  friendly game is not consent to a wager — everyone has to say yes again now that there is money
+  on it.
+- `endGame` drops the table's ready set and re-prompts, **unless the hand was wagered**. It asks
+  `hasPotAtTable` *before* telling the bet layer the hand is over, because that is the last moment
+  the pot still exists; a wagered table is prompted by `BetManager.close()` instead, once the pot
+  has actually settled rather than while its winner is deciding whether to let it ride.
+- `close(s, false)` is the shutdown path: no "play again" offer on a server that is stopping.
 
 ### Theme editor
 
@@ -492,8 +566,31 @@ their own cards. `isPluginItem()` is the second line of defence.
 
 ### Wagering invariants
 
-- **escrow is the source of truth.** A staked item leaves the inventory, so `EscrowStore` writes to
-  disk synchronously on every stake, refund and payout. Never let a stake live only in RAM.
+- **A stake is one value, not two.** `Stake` (items + money) is what gets refunded, forfeited,
+  re-attributed and paid out, because every rule here treats the two the same and two parallel
+  maps would eventually drift. A refund that hands back the diamonds and quietly keeps the cash is
+  indistinguishable from theft, and money is the half with nothing on the table to notice its
+  absence — which is why `BetSessionTest` pins the money side of withdraw, forfeit and
+  `reattributeTo` even though staking an item needs a live server.
+- **escrow is the source of truth.** A staked item leaves the inventory and staked money leaves the
+  balance, so `EscrowStore` writes to disk synchronously on every stake, refund and payout. Never
+  let a stake live only in RAM.
+- **Money is withdrawn BEFORE the stake is recorded, in that order.** The reverse would have a
+  crash in the gap hand back money that was never actually paid; minting currency out of a power
+  cut is a worse failure than the vanishing chance of losing one stake to it.
+- **Vault is reached reflectively** (`VaultEconomy`), for exactly the reasons `CustomBlocks` is: it
+  is on no Maven repo this build pulls from, and a server without it must not pay a
+  `NoClassDefFoundError` the first time somebody types `/gamble 500`. Every call is wrapped; a
+  refused transaction returns false, which the callers already read as "it didn't happen" — a stake
+  is refused, and a payout stays in escrow for the next login rather than evaporating.
+  `moneyAllowed()` is `settings.moneyEnabled() && economy.available()`; both halves matter.
+- **Every message that quotes a pot goes through `potLabel`/`stakeLabel`.** Half the wagering
+  messages predate money, and the way they would have gone wrong is by carrying on saying
+  "8 items" about a pot that is mostly cash — technically true, and a lie about what the player is
+  playing for. `bets.log` gets the raw figure to two decimal places instead, never the economy's
+  formatting: it is evidence, and "$1.2k" is unreadable as a ledger.
+- The pot draws money as **one `GOLD_NUGGET`** among the staked items. Without it a pure-money pot
+  renders as nothing at all on the felt, which reads as a broken table rather than as a wager.
 - **`shutdown()` deliberately does not refund.** Mutating player inventories while the server is
   stopping races the save that persists them, so whether the items survive is down to timing. Doing
   nothing leaves them in escrow, which is the path a `kill -9` takes anyway: returned on next join.

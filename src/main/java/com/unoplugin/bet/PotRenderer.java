@@ -2,6 +2,7 @@ package com.unoplugin.bet;
 
 import net.kyori.adventure.text.Component;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.entity.Display;
@@ -29,6 +30,11 @@ import java.util.Random;
  *
  * <p>Layout is deterministic per slot index (fixed seed), so a rebuild after someone adds to
  * the pot leaves every existing item exactly where it was — no shuffling heap.
+ *
+ * <p>Money in the pot is drawn as a single {@link #COIN}. Without it a pot that is pure
+ * currency renders as nothing at all on the felt, which reads as a broken table rather than
+ * as a wager — and the whole point of drawing the pot is that you can see what is at stake
+ * from across the room. The exact figure is in the tally above it.
  */
 public final class PotRenderer {
 
@@ -37,6 +43,8 @@ public final class PotRenderer {
     private static final double RING_RADIUS = 0.34;
     private static final double LIFT = 0.02;       // clear of the felt, no z-fighting
     private static final long LAYOUT_SEED = 0x150D5L;
+    /** Stands in for the money half of a pot — one coin, however large the sum. */
+    private static final Material COIN = Material.GOLD_NUGGET;
 
     private final Plugin plugin;
     private final NamespacedKey tag;
@@ -54,12 +62,13 @@ public final class PotRenderer {
         this.yaw = yaw;
     }
 
-    /** Redraw the heap for {@code items} and set the floating label. */
-    public void update(List<ItemStack> items, Component label) {
+    /** Redraw the heap for {@code stake} and set the floating label. */
+    public void update(Stake stake, Component label) {
         World w = centre.getWorld();
         if (w == null) {
             return;
         }
+        List<ItemStack> items = drawn(stake);
         int target = Math.min(MAX_SHOWN, items.size());
 
         // Trim first so a shrinking pot (refund / cash-out) drops its extra displays.
@@ -119,6 +128,24 @@ public final class PotRenderer {
     }
 
     // ----------------------------------------------------------------- helpers
+
+    /**
+     * What the heap actually shows: the staked stacks, with the coin first when there is
+     * money in the pot.
+     *
+     * <p>First rather than last so the coin keeps slot 0 as items are added around it. The
+     * one reshuffle is when money first enters a pot that already had items in it, which is
+     * a single redraw and beats having the coin hop about as the pot grows.
+     */
+    private static List<ItemStack> drawn(Stake stake) {
+        if (!stake.hasMoney()) {
+            return stake.items();
+        }
+        List<ItemStack> out = new ArrayList<>(stake.items().size() + 1);
+        out.add(new ItemStack(COIN));
+        out.addAll(stake.items());
+        return out;
+    }
 
     /** Deterministic spot for the nth item — a loose ring that spirals inward as it fills. */
     private Location slot(int index) {

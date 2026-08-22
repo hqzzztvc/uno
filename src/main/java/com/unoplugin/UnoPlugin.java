@@ -76,8 +76,16 @@ public final class UnoPlugin extends JavaPlugin {
         // A table with a hand or a pot on it must not be removable out from under them.
         tableManager.setBusyCheck(id ->
                 gameManager.hasGameAtTable(id) || betManager.hasSessionAtTable(id));
-        // Getting up from the table is leaving the hand, by the same route as /uno quit.
-        tableManager.setStandUpHook(gameManager::forfeit);
+        // Getting up from the table settles BOTH layers, because "leaving the table" means
+        // different things depending on how far along the table is: mid-hand it is a forfeit,
+        // and during an ante — when there is no hand for the game layer to forfeit — it is a
+        // withdrawal. Wiring only the game layer left a stake, a pot and a mat sitting on a
+        // table nobody was at.
+        tableManager.setStandUpHook((player, tableId) -> {
+            boolean droppedFromHand = gameManager.onStandUp(player, tableId);
+            betManager.onStandUp(player, tableId);
+            return droppedFromHand;
+        });
 
         events.registerEvents(new ResourcePackSender(this, settings), this);
 

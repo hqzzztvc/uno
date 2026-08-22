@@ -3,10 +3,8 @@ package com.unoplugin.bet;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.scheduler.BukkitTask;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -15,10 +13,10 @@ import java.util.UUID;
  * One table's gambling session: who has staked what, who's still in, and which UNO hand
  * (if any) is currently deciding it.
  *
- * <p><strong>Attribution never gets lost.</strong> Every item ever staked stays filed under
- * the player who staked it, even after they forfeit — that record is what makes a crash
- * refundable. Who <em>wins</em> the items is a separate question, answered by {@link #live}
- * and the hand result; the pot is only re-attributed at payout time.
+ * <p><strong>Attribution never gets lost.</strong> Everything ever staked — items and money
+ * alike — stays filed under the player who staked it, even after they forfeit: that record is
+ * what makes a crash refundable. Who <em>wins</em> the pot is a separate question, answered by
+ * {@link #live} and the hand result; the pot is only re-attributed at payout time.
  */
 public final class BetSession {
 
@@ -29,7 +27,7 @@ public final class BetSession {
     private final UUID hostId;
 
     /** Original staker -> everything they've put in. Survives forfeit; drives refunds. */
-    private final Map<UUID, List<ItemStack>> stakes = new LinkedHashMap<>();
+    private final Map<UUID, Stake> stakes = new LinkedHashMap<>();
     /** Players still contesting the pot (a forfeit removes you; your items stay in). */
     private final Set<UUID> live = new LinkedHashSet<>();
     private final Set<UUID> ready = new LinkedHashSet<>();
@@ -51,21 +49,30 @@ public final class BetSession {
 
     /** Add one dropped stack to a player's ante; they join the bet if they hadn't yet. */
     public void stake(UUID player, ItemStack stack) {
-        stakes.computeIfAbsent(player, k -> new ArrayList<>()).add(stack.clone());
+        add(player, Stake.ofItem(stack));
+    }
+
+    /** Add money to a player's ante. Already withdrawn from their balance by the caller. */
+    public void stakeMoney(UUID player, double amount) {
+        add(player, Stake.ofMoney(amount));
+    }
+
+    private void add(UUID player, Stake more) {
+        stakes.merge(player, more, Stake::plus);
         live.add(player);
     }
 
-    /** Everything one player has staked (empty list if none) — the refund list. */
-    public List<ItemStack> stakeOf(UUID player) {
-        return stakes.getOrDefault(player, List.of());
+    /** Everything one player has staked ({@link Stake#NONE} if nothing) — the refund. */
+    public Stake stakeOf(UUID player) {
+        return stakes.getOrDefault(player, Stake.NONE);
     }
 
     /** Pull a player out entirely and return what they get back. ANTE only. */
-    public List<ItemStack> withdraw(UUID player) {
-        List<ItemStack> back = stakes.remove(player);
+    public Stake withdraw(UUID player) {
+        Stake back = stakes.remove(player);
         live.remove(player);
         ready.remove(player);
-        return back == null ? List.of() : back;
+        return back == null ? Stake.NONE : back;
     }
 
     /**
@@ -79,24 +86,29 @@ public final class BetSession {
 
     /** Hand the whole pot to one owner, on paper — used when a win rides into the next hand. */
     public void reattributeTo(UUID owner) {
-        List<ItemStack> all = potItems();
+        Stake all = pot();
         stakes.clear();
         if (!all.isEmpty()) {
             stakes.put(owner, all);
         }
     }
 
-    /** Every item in the pot, regardless of who staked it. */
-    public List<ItemStack> potItems() {
-        List<ItemStack> all = new ArrayList<>();
-        for (List<ItemStack> s : stakes.values()) {
-            all.addAll(s);
+    /** Everything in the pot, items and money, regardless of who staked it. */
+    public Stake pot() {
+        Stake all = Stake.NONE;
+        for (Stake s : stakes.values()) {
+            all = all.plus(s);
         }
         return all;
     }
 
+    /** Items in the pot, counted the way players count them. Money is reported separately. */
     public int potSize() {
-        return EscrowStore.count(potItems());
+        return pot().itemCount();
+    }
+
+    public double potMoney() {
+        return pot().money();
     }
 
     public Set<UUID> stakers() {

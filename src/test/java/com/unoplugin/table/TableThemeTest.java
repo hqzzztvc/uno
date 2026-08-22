@@ -133,16 +133,6 @@ class TableThemeTest {
         assertEquals("cherry", ThemeStore.migrateLegacyId(null), "null must still be placeable");
     }
 
-    /** Table kinds are typed into /uno give, so they resolve the same way seat keys do. */
-    @Test
-    void tableKindsResolveCaseInsensitively() {
-        assertEquals(UnoTable.Kind.CASUAL, UnoTable.Kind.byKey("casual"));
-        assertEquals(UnoTable.Kind.CASUAL, UnoTable.Kind.byKey("CASUAL"));
-        assertEquals(UnoTable.Kind.CASINO, UnoTable.Kind.byKey("Casino"));
-        assertNull(UnoTable.Kind.byKey("roulette"));
-        assertNull(UnoTable.Kind.byKey(null));
-    }
-
     /** A theme's grid is addressed by row/column all through the builder and the editor. */
     @Test
     void gridIsAddressableAndTheRightSize() {

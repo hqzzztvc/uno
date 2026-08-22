@@ -34,6 +34,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -65,6 +66,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
     private final Map<UUID, String> botNames = new HashMap<>();    // bot id -> name
     private final Map<UUID, UUID> lastTurn = new HashMap<>();      // gameId -> who it was on
     private final Map<UUID, Set<UUID>> onOneCard = new HashMap<>(); // gameId -> already "UNO!"d
+    private final Map<UUID, Set<UUID>> tableReady = new HashMap<>(); // tableId -> said "ready"
     private final Set<UUID> bots = new HashSet<>();
     private GameListener listener;                                  // optional (the bet layer)
 
@@ -252,11 +254,16 @@ public final class GameManager implements Listener, HandManager.CardActions {
         // Off the seat axes, every seat sees the two piles side by side instead.
         double axis = r + Math.PI / 4;
         Vector spread = new Vector(Math.cos(axis), 0, Math.sin(axis));
-        // Bottom card sits flush on the table surface.
+        // Bottom card sits flush on whatever the top surface actually is: the felt on a
+        // casual hand, the "Let It Ride" mat on a wagered one. The mat is already down by
+        // the time the bet layer deals, so asking for the lift here gets the right answer
+        // without the game layer having to know a pot exists.
+        double lift = tableManager == null ? 0.0 : tableManager.matLift(table.id());
+        double top = centre.getY() + UnoTable.SURFACE_Y + lift;
         Location discardLoc = centre.clone().add(spread.clone().multiply(-PILE_SPREAD));
-        discardLoc.setY(centre.getY() + UnoTable.SURFACE_Y);
+        discardLoc.setY(top);
         Location drawLoc = centre.clone().add(spread.clone().multiply(PILE_SPREAD));
-        drawLoc.setY(centre.getY() + UnoTable.SURFACE_Y);
+        drawLoc.setY(top);
 
         PileRenderer pile = new PileRenderer(plugin, discardLoc, drawLoc, pileYaw);
         pile.spawn(game.top(), game.drawPileSize());
@@ -277,6 +284,114 @@ public final class GameManager implements Listener, HandManager.CardActions {
         fx.deal(pile.discardLocation());
         afterMove(game); // renders every hand, shows the bar, drives the first bot if needed
         return gameId;
+    }
+
+    // ---------------------------------------------------------- ready-up / deal
+
+    /**
+     * "I'm in" — {@code /uno ready}, or the button that arrives when you sit down.
+     *
+     * <p>This is the casual half of the front door, and it exists to delete a step. Getting a
+     * game going used to mean everyone sat, and then one person who knew the command typed
+     * {@code /uno start}; whoever that was had to notice the table was full, and everyone else
+     * had to wait on them. Now each player says once that they're in, and the hand deals
+     * itself the moment the last one does. Nobody is dealt into a hand they hadn't agreed to.
+     *
+     * <p>{@code /uno start} still deals on demand, for the table that doesn't want to wait
+     * for the friend who is AFK.
+     */
+    public void ready(Player player) {
+        if (tableManager == null) {
+            messages.send(player, "game.tables-unavailable");
+            return;
+        }
+        UUID id = player.getUniqueId();
+        UnoTable table = tableManager.seatedTable(id);
+        if (table == null) {
+            messages.send(player, "game.sit-first");
+            return;
+        }
+        if (playerGame.containsKey(id)) {
+            messages.send(player, "game.already-in-game");
+            return;
+        }
+        if (hasGameAtTable(table.id())) {
+            messages.send(player, "game.table-in-use");
+            return;
+        }
+        Set<UUID> readySet = tableReady.computeIfAbsent(table.id(), k -> new LinkedHashSet<>());
+        if (!readySet.add(id)) {
+            messages.send(player, "game.already-ready");
+            return;
+        }
+        // Someone may have stood up since they said ready. Reconciling against the seats here
+        // rather than trusting the set is what lets the "everyone's in" test below be an
+        // exact match instead of a guess.
+        List<UUID> seated = tableManager.seatedPlayersAt(table.id());
+        readySet.retainAll(seated);
+
+        broadcastTable(table.id(), messages.get("game.ready",
+                "player", player.getName(), "ready", readySet.size(), "seated", seated.size()));
+
+        if (readySet.size() == seated.size() && seated.size() >= table.minPlayers()) {
+            startSeated(player, 0);
+            return;
+        }
+        if (seated.size() < table.minPlayers()) {
+            messages.send(player, "game.ready-alone");
+        } else {
+            messages.send(player, "game.ready-waiting",
+                    "count", seated.size() - readySet.size(),
+                    "deal", messages.button("game.deal-now-button", "/uno start"));
+        }
+    }
+
+    /** Everyone at this table is back to undecided — used when stakes enter the picture. */
+    public void clearReady(UUID tableId) {
+        tableReady.remove(tableId);
+    }
+
+    /**
+     * Standing up: drop out of the hand AND withdraw a pending "ready".
+     *
+     * <p>Wired as one half of the table layer's stand-up hook so both happen on one route,
+     * whether the player typed {@code /uno leave}, pressed shift, or disconnected. The other
+     * half is {@code BetManager.onStandUp} — during an ante there is no hand here to forfeit,
+     * and a stake left behind by somebody who has walked away is the bug that pairing fixes.
+     */
+    public boolean onStandUp(Player player, UUID tableId) {
+        Set<UUID> readySet = tableReady.get(tableId);
+        if (readySet != null) {
+            readySet.remove(player.getUniqueId());
+        }
+        return forfeit(player);
+    }
+
+    /** Withdraw one player's "ready" wherever it was given. */
+    private void clearReadyFor(UUID playerId) {
+        for (Set<UUID> readySet : tableReady.values()) {
+            readySet.remove(playerId);
+        }
+    }
+
+    /** Offer everyone still sitting at a table the casual/stakes choice again. */
+    private void promptTable(UUID tableId) {
+        if (tableManager != null && tableId != null) {
+            tableManager.promptModeAt(tableId, "table.again");
+        }
+    }
+
+    /** Say something to everyone sitting at a table, in or out of a hand. */
+    private void broadcastTable(UUID tableId, Component message) {
+        if (tableManager == null) {
+            return;
+        }
+        for (UUID id : tableManager.seatedPlayersAt(tableId)) {
+            Player p = Bukkit.getPlayer(id);
+            if (p != null) {
+                p.sendMessage(message);
+            }
+        }
     }
 
     // ------------------------------------------------------- HandManager hooks
@@ -865,6 +980,12 @@ public final class GameManager implements Listener, HandManager.CardActions {
         if (!games.containsKey(gid)) {
             return; // already ended (win-delay + quit can both fire)
         }
+        UUID tableId = gameTable.get(gid);
+        // Asked BEFORE the bet layer is told the hand is over, because that is the last
+        // moment the pot still exists. A wagered table must not be offered "play again"
+        // while its winner is still deciding whether to let it ride — the bet layer prompts
+        // the table itself once the pot has actually settled.
+        boolean wagered = tableId != null && listener != null && listener.hasPotAtTable(tableId);
         UUID winner = game.winner();
         if (winner != null) {
             broadcast(game, messages.get("game.win", "player", displayName(winner)));
@@ -892,8 +1013,14 @@ public final class GameManager implements Listener, HandManager.CardActions {
         }
         games.remove(gid);
         gameTable.remove(gid);
+        // A fresh hand needs fresh consent: nobody is dealt in again on a "ready" they gave
+        // before the last hand was even played.
+        tableReady.remove(tableId);
         if (listener != null) {
             listener.onGameEnd(gid, winner); // the bet layer settles the pot
+        }
+        if (!wagered) {
+            promptTable(tableId);
         }
     }
 
@@ -1233,6 +1360,9 @@ public final class GameManager implements Listener, HandManager.CardActions {
      */
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
+        // Also cleared by the stand-up hook when the table ejects them, but the order the two
+        // quit handlers run in isn't ours to decide and clearing twice costs nothing.
+        clearReadyFor(event.getPlayer().getUniqueId());
         forfeit(event.getPlayer());
     }
 

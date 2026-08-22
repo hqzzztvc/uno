@@ -18,12 +18,13 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Crash-safe custody for wagered items.
+ * Crash-safe custody for wagered items <em>and</em> money.
  *
  * <p>The invariant: <strong>at every instant the escrow files record who gets what back if
- * the server dies right now.</strong> A staked item leaves the player's inventory, so it must
- * never live only in RAM — a crash, a {@code kill -9} or a power cut would eat it. Every
- * stake, refund and payout is written to disk synchronously, before anything else happens.
+ * the server dies right now.</strong> A staked item leaves the player's inventory and staked
+ * money leaves their balance, so neither may live only in RAM — a crash, a {@code kill -9} or
+ * a power cut would eat it. Every stake, refund and payout is written to disk synchronously,
+ * before anything else happens.
  *
  * <p>One file per owner ({@code plugins/UNO/escrow/<uuid>.yml}) rather than one big file: a
  * single stake then costs one small write instead of re-serialising every item the server is
@@ -31,36 +32,40 @@ import java.util.UUID;
  * shrinks. A legacy {@code escrow.yml} is imported automatically on first run.
  *
  * <p>Anything owed to an offline player waits here and is handed over on their next join.
+ * Money is the one thing that usually doesn't have to wait: Vault can pay an offline account,
+ * so a payout only falls back to escrow when the deposit is actually refused.
  */
 public final class EscrowStore {
 
     private final Plugin plugin;
     private final Messages messages;
+    private final VaultEconomy economy;
     private final File dir;
     private final File legacyFile;
 
-    /** owner -> the items we are holding for them right now. */
-    private final Map<UUID, List<ItemStack>> held = new HashMap<>();
+    /** owner -> what we are holding for them right now. */
+    private final Map<UUID, Stake> held = new HashMap<>();
 
-    public EscrowStore(Plugin plugin, Messages messages) {
+    public EscrowStore(Plugin plugin, Messages messages, VaultEconomy economy) {
         this.plugin = plugin;
         this.messages = messages;
+        this.economy = economy;
         this.dir = new File(plugin.getDataFolder(), "escrow");
         this.legacyFile = new File(plugin.getDataFolder(), "escrow.yml");
         load();
     }
 
     /**
-     * Record (or replace) everything we hold for one owner. An empty list means we hold
-     * nothing for them, which is how a refund is recorded once the items are back in hand.
+     * Record (or replace) everything we hold for one owner. An empty stake means we hold
+     * nothing for them, which is how a refund is recorded once it is back in their hands.
      */
-    public void hold(UUID owner, List<ItemStack> items) {
-        if (items == null || items.isEmpty()) {
+    public void hold(UUID owner, Stake stake) {
+        if (stake == null || stake.isEmpty()) {
             held.remove(owner);
             deleteFile(owner);
         } else {
-            held.put(owner, copy(items));
-            writeFile(owner, held.get(owner));
+            held.put(owner, stake);
+            writeFile(owner, stake);
         }
     }
 
@@ -72,36 +77,59 @@ public final class EscrowStore {
     }
 
     /**
-     * Hand {@code items} to a player: straight into their inventory if they're online,
-     * otherwise into escrow to wait for their next login.
+     * Hand {@code stake} to a player: into their inventory and their balance if it can go
+     * there now, and into escrow to wait for their next login if it can't.
+     *
+     * <p>The two halves are settled independently and whatever could not be delivered is
+     * what stays on file. Handing over the diamonds and silently dropping the cash — or the
+     * reverse — is the failure this shape exists to prevent.
      */
-    public void payTo(UUID owner, List<ItemStack> items) {
-        if (items == null || items.isEmpty()) {
+    public void payTo(UUID owner, Stake stake) {
+        if (stake == null || stake.isEmpty()) {
             release(owner);
             return;
         }
         Player online = Bukkit.getPlayer(owner);
+        List<ItemStack> undelivered = stake.items();
         if (online != null) {
-            release(owner);
-            give(online, items);
-        } else {
-            hold(owner, items);
+            give(online, stake.items());
+            undelivered = List.of();
         }
+        double unpaid = stake.money();
+        if (unpaid > 0 && economy.deposit(owner, unpaid)) {
+            unpaid = 0;
+        }
+        hold(owner, new Stake(undelivered, unpaid));
     }
 
     /** Called on join: give the player anything we've been holding for them. */
     public void deliverPending(Player player) {
-        List<ItemStack> items = held.get(player.getUniqueId());
-        if (items == null || items.isEmpty()) {
+        UUID id = player.getUniqueId();
+        Stake stake = held.get(id);
+        if (stake == null || stake.isEmpty()) {
             return;
         }
-        release(player.getUniqueId());
-        give(player, items);
-        messages.send(player, "escrow.returned", "items", count(items));
+        release(id);
+        give(player, stake.items());
+        // Money can be refused (no economy plugin now, or one that threw). Put exactly that
+        // part back on file rather than dropping it — they get it on the join after next.
+        boolean paid = !stake.hasMoney() || economy.deposit(id, stake.money());
+        if (!paid) {
+            hold(id, Stake.ofMoney(stake.money()));
+        }
+        if (stake.itemCount() > 0) {
+            messages.send(player, "escrow.returned", "items", stake.itemCount());
+        }
+        if (stake.hasMoney() && paid) {
+            messages.send(player, "escrow.returned-money", "money", economy.format(stake.money()));
+        }
     }
 
     /** Put items in a player's hands now; overflow lands on the floor rather than vanishing. */
     public void give(Player player, List<ItemStack> items) {
+        if (items.isEmpty()) {
+            return;
+        }
         ItemStack[] arr = copy(items).toArray(new ItemStack[0]);
         Map<Integer, ItemStack> leftover = player.getInventory().addItem(arr);
         if (leftover.isEmpty()) {
@@ -160,18 +188,19 @@ public final class EscrowStore {
                 plugin.getLogger().warning("escrow: skipping file with a bad owner id '" + f.getName() + "'");
                 continue;
             }
-            List<ItemStack> items = readItems(YamlConfiguration.loadConfiguration(f), "items");
-            if (!items.isEmpty()) {
-                held.put(owner, items);
+            YamlConfiguration cfg = YamlConfiguration.loadConfiguration(f);
+            Stake stake = new Stake(readItems(cfg, "items"), cfg.getDouble("money", 0.0));
+            if (!stake.isEmpty()) {
+                held.put(owner, stake);
             }
         }
         if (!held.isEmpty()) {
-            plugin.getLogger().info("Escrow: holding items for " + held.size()
+            plugin.getLogger().info("Escrow: holding stakes for " + held.size()
                     + " player(s) from a previous session — returning them on join.");
         }
     }
 
-    /** One-time import of the old single-file format. */
+    /** One-time import of the old single-file format (items only — it predates money). */
     private void importLegacyFile() {
         if (!legacyFile.exists()) {
             return;
@@ -190,7 +219,7 @@ public final class EscrowStore {
                 }
                 List<ItemStack> items = readItems(sec, key);
                 if (!items.isEmpty()) {
-                    writeFile(owner, items);
+                    writeFile(owner, new Stake(items, 0.0));
                     moved++;
                 }
             }
@@ -218,19 +247,22 @@ public final class EscrowStore {
         return items;
     }
 
-    private void writeFile(UUID owner, List<ItemStack> items) {
+    private void writeFile(UUID owner, Stake stake) {
         if (!dir.exists() && !dir.mkdirs()) {
             plugin.getLogger().severe("Could not create " + dir + " — staked items NOT saved!");
             return;
         }
         YamlConfiguration cfg = new YamlConfiguration();
-        cfg.set("items", items);
+        cfg.set("items", stake.items());
+        if (stake.hasMoney()) {
+            cfg.set("money", stake.money());
+        }
         try {
             cfg.save(fileFor(owner));
         } catch (IOException ex) {
             // Loud on purpose: a silent failure here is how players lose diamonds.
             plugin.getLogger().severe("FAILED to write escrow for " + owner
-                    + " — staked items are at risk: " + ex.getMessage());
+                    + " — a staked wager is at risk: " + ex.getMessage());
         }
     }
 

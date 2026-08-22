@@ -38,3 +38,7 @@ server/
 
 # Screen recordings dropped in the repo root while testing
 *.mov
+
+# Python bytecode — generate_table_mat.py imports generate_card_models for its rotation helpers
+__pycache__/
+*.pyc
