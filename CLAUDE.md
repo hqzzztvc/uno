@@ -219,8 +219,13 @@ what happens next" below.
   itself: players are holding cards from the current deck, so a rebuild puts a second copy of every
   one of them into play. Callers treat null as "no card — the turn just passes".
 - **`GameManager`** implements `HandManager.CardActions` (input → rules) and owns the bossbar, the
-  wild-colour inventory GUI, the `PileRenderer`, and the bots. Bots are plain random `UUID`s in the
+  wild-colour prompt, the `PileRenderer`, and the bots. Bots are plain random `UUID`s in the
   `bots` set with no `Player` behind them — every loop that touches players must skip them.
+- **A wild's colour is asked for in chat, not in a window.** `promptColor` sends four
+  `/uno colour <c>` buttons in a 2×2 grid — red and blue over yellow and green, as on the card —
+  and the padding inside each label is what lines the columns up in the default font. There is no
+  close-without-choosing path to auto-pick from any more; the turn timer is the only fallback, so
+  don't disarm it for a pending colour.
 - **`BetManager`** implements `GameManager.GameListener` and sits *on top of* a normal hand. It never
   touches game rules; it reacts to `onGameEnd` / `onForfeit`.
 - Order matters at shutdown: `BetManager.shutdown()` refunds before games and tables tear down.

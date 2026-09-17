@@ -122,11 +122,16 @@ game:
   win: "<gold><bold><player> wins!</bold>"
   left: "<red><player> left the hand."
   bossbar: "<white>Top: <gold><top>  <white>| Colour: <colour>  <white>| Turn: <aqua><player> <dir>  <white>| Deck: <gray><deck>"
-  colour-title: "Pick a colour for your wild"
-  colour-red: "<red><bold>Red"
-  colour-green: "<green><bold>Green"
-  colour-blue: "<blue><bold>Blue"
-  colour-yellow: "<yellow><bold>Yellow"
+  # Playing a wild puts the four colours in chat, laid out the way they sit on the card: red and
+  # blue on top, yellow and green underneath. The spaces inside each button are what line the
+  # two columns up in Minecraft's default font (bold capitals are 7px, bold spaces and brackets
+  # 5px), so rewording a button means re-padding it.
+  colour-prompt: "<gray>Pick a colour for your wild:<newline>  <red_button>  <blue_button><newline>  <yellow_button>  <green_button>"
+  colour-red-button: "<red><bold>[   RED   ]"
+  colour-blue-button: "<blue><bold>[   BLUE   ]"
+  colour-yellow-button: "<yellow><bold>[ YELLOW ]"
+  colour-green-button: "<green><bold>[  GREEN  ]"
+  no-colour: "<gray>There's no wild waiting on a colour from you."
   # Shown the moment the turn comes round. The bar stays up for the whole turn, and only
   # the player whose turn it is can see it.
   your-turn-title: "<gold><bold>YOUR TURN"

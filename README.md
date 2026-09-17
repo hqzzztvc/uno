@@ -90,8 +90,9 @@ controls — you can't break or place blocks.
 The selected card lifts out of the fan so you can see what you're about to play.
 
 The bossbar shows the top card, the active colour, whose turn it is, the direction of play and how
-many cards are left in the deck. Playing a wild opens a colour picker; closing it without choosing
-picks the colour you hold most of. As your hand grows, the fan compresses so every card stays visible.
+many cards are left in the deck. Playing a wild puts four clickable colours in chat, laid out like the
+card — red and blue on top, yellow and green below; if the turn timer runs out first, you get the
+colour you hold most of. As your hand grows, the fan compresses so every card stays visible.
 
 Standard rules: 108-card deck, 7 cards each, match colour / number / symbol, Skip, Reverse (a Skip in
 a 2-player game), +2, Wild and Wild +4. Empty your hand to win. If you disconnect mid-hand, you drop

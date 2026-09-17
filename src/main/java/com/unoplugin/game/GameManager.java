@@ -11,7 +11,6 @@ import net.kyori.adventure.bossbar.BossBar;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
-import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.title.Title;
 import org.bukkit.Bukkit;
 import org.bukkit.Color;
@@ -38,6 +37,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -45,7 +45,7 @@ import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Owns running {@link UnoGame}s, wires them to the {@link HandManager} (each player's fan),
- * shows a status bossbar, runs the wild-colour GUI, drives simple bot opponents, and keeps
+ * shows a status bossbar, asks for a wild's colour, drives simple bot opponents, and keeps
  * an idle player from freezing the table.
  * Implements {@link HandManager.CardActions} so play/draw input flows into the game rules.
  */
@@ -470,7 +470,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
                     handleResult(game, actor, game.chooseColor(actor, botWildColor(game, actor)), null);
                 } else {
                     if (actorPlayer != null) {
-                        openColorGui(actorPlayer, game);
+                        promptColor(actorPlayer);
                     }
                     // An unanswered colour prompt stalls the table just as hard as an idle turn.
                     armTurnTimer(game, actor);
@@ -995,9 +995,6 @@ public final class GameManager implements Listener, HandManager.CardActions {
         }
         Player p = Bukkit.getPlayer(actor);
         if (actor.equals(game.pendingColorPlayer())) {
-            if (p != null) {
-                p.closeInventory();
-            }
             handleResult(game, actor, game.chooseColor(actor, preferredColor(game, actor)), p);
             return;
         }
@@ -1185,67 +1182,54 @@ public final class GameManager implements Listener, HandManager.CardActions {
 
     // ----------------------------------------------------------- wild colour
 
-    private void openColorGui(Player p, UnoGame game) {
-        ColorPickerHolder holder = new ColorPickerHolder(game.id());
-        Inventory inv = Bukkit.createInventory(holder, 9, messages.get("game.colour-title"));
-        holder.inventory = inv;
-        inv.setItem(2, pane(Material.RED_STAINED_GLASS_PANE, messages.get("game.colour-red")));
-        inv.setItem(3, pane(Material.GREEN_STAINED_GLASS_PANE, messages.get("game.colour-green")));
-        inv.setItem(5, pane(Material.BLUE_STAINED_GLASS_PANE, messages.get("game.colour-blue")));
-        inv.setItem(6, pane(Material.YELLOW_STAINED_GLASS_PANE, messages.get("game.colour-yellow")));
-        p.openInventory(inv);
+    /**
+     * Ask for a wild's colour in chat: four click-to-run buttons, red and blue over yellow and
+     * green, the way the colours sit on the card.
+     *
+     * <p>Chat rather than a window, so nothing covers the table while the player decides. There
+     * is no "closed without choosing" any more — an unanswered prompt is caught by the turn
+     * timer, which picks the colour they hold most of.
+     */
+    private void promptColor(Player p) {
+        messages.send(p, "game.colour-prompt",
+                "red_button", button("game.colour-red-button", "/uno colour red"),
+                "blue_button", button("game.colour-blue-button", "/uno colour blue"),
+                "yellow_button", button("game.colour-yellow-button", "/uno colour yellow"),
+                "green_button", button("game.colour-green-button", "/uno colour green"));
     }
 
-    @EventHandler
-    public void onColorClick(InventoryClickEvent event) {
-        if (!(event.getInventory().getHolder() instanceof ColorPickerHolder holder)) {
+    /**
+     * {@code /uno colour <red|blue|yellow|green>} — answer the wild you just played.
+     *
+     * <p>A button left in chat from an earlier wild, or clicked twice, lands here with nothing
+     * pending and is told so rather than colouring somebody else's card.
+     */
+    public void chooseColor(Player player, String name) {
+        UnoGame game = gameOf(player.getUniqueId());
+        if (game == null || !player.getUniqueId().equals(game.pendingColorPlayer())) {
+            messages.send(player, "game.no-colour");
             return;
         }
-        event.setCancelled(true);
-        ItemStack it = event.getCurrentItem();
-        // The picker's own slots only: a glass pane in the player's inventory below is not a vote.
-        if (it == null || event.getRawSlot() >= event.getInventory().getSize()) {
+        Card.Color color = parseColor(name);
+        if (color == null) {
+            promptColor(player); // typed by hand and misspelt: show the buttons again
             return;
         }
-        Card.Color color = switch (it.getType()) {
-            case RED_STAINED_GLASS_PANE -> Card.Color.RED;
-            case GREEN_STAINED_GLASS_PANE -> Card.Color.GREEN;
-            case BLUE_STAINED_GLASS_PANE -> Card.Color.BLUE;
-            case YELLOW_STAINED_GLASS_PANE -> Card.Color.YELLOW;
+        handleResult(game, player.getUniqueId(), game.chooseColor(player.getUniqueId(), color), player);
+    }
+
+    /** A colour a wild can be given, by name, or null — WILD itself is not one of them. */
+    private static Card.Color parseColor(String name) {
+        if (name == null) {
+            return null;
+        }
+        return switch (name.toLowerCase(Locale.ROOT)) {
+            case "red" -> Card.Color.RED;
+            case "blue" -> Card.Color.BLUE;
+            case "yellow" -> Card.Color.YELLOW;
+            case "green" -> Card.Color.GREEN;
             default -> null;
         };
-        if (color == null || !(event.getWhoClicked() instanceof Player p)) {
-            return;
-        }
-        // Next tick, not here. Bukkit forbids closing an inventory from inside its own click
-        // event, and choosing re-renders the fan — writing to the very inventory the server is
-        // still in the middle of settling this click against.
-        plugin.getServer().getScheduler().runTask(plugin, () -> {
-            if (p.getOpenInventory().getTopInventory().getHolder() == holder) {
-                p.closeInventory();
-            }
-            UnoGame game = games.get(holder.gameId);
-            // Checked, because two clicks in one tick schedule two of these.
-            if (game != null && p.getUniqueId().equals(game.pendingColorPlayer())) {
-                handleResult(game, p.getUniqueId(), game.chooseColor(p.getUniqueId(), color), p);
-            }
-        });
-    }
-
-    @EventHandler
-    public void onColorClose(InventoryCloseEvent event) {
-        if (!(event.getInventory().getHolder() instanceof ColorPickerHolder holder)
-                || !(event.getPlayer() instanceof Player p)) {
-            return;
-        }
-        // Closed without choosing — auto-pick next tick so the game doesn't stall.
-        plugin.getServer().getScheduler().runTask(plugin, () -> {
-            UnoGame game = games.get(holder.gameId);
-            if (game != null && p.getUniqueId().equals(game.pendingColorPlayer())) {
-                handleResult(game, p.getUniqueId(),
-                        game.chooseColor(p.getUniqueId(), preferredColor(game, p.getUniqueId())), p);
-            }
-        });
     }
 
     // ------------------------------------------------------------ seven-O swap
@@ -1254,8 +1238,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
      * Pick whose hand to take after playing a 7.
      *
      * <p>A head per opponent, labelled with how many cards they are holding — the only thing
-     * anyone actually decides on. Reuses the colour picker's shape so the two prompts feel
-     * like the same game.
+     * anyone actually decides on.
      */
     private void openSwapGui(Player p, UnoGame game) {
         SwapPickerHolder holder = new SwapPickerHolder(game.id());
@@ -1291,12 +1274,15 @@ public final class GameManager implements Listener, HandManager.CardActions {
         if (target == null || !(event.getWhoClicked() instanceof Player p)) {
             return;
         }
-        // Next tick, for the same reasons as the colour picker.
+        // Next tick, not here. Bukkit forbids closing an inventory from inside its own click
+        // event, and choosing re-renders the fan — writing to the very inventory the server is
+        // still in the middle of settling this click against.
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             if (p.getOpenInventory().getTopInventory().getHolder() == holder) {
                 p.closeInventory();
             }
             UnoGame game = games.get(holder.gameId);
+            // Checked, because two clicks in one tick schedule two of these.
             if (game != null && p.getUniqueId().equals(game.pendingSwapPlayer())) {
                 handleResult(game, p.getUniqueId(), game.chooseSwap(p.getUniqueId(), target), p);
             }
@@ -1579,28 +1565,6 @@ public final class GameManager implements Listener, HandManager.CardActions {
             case YELLOW -> BossBar.Color.YELLOW;
             default -> BossBar.Color.WHITE;
         };
-    }
-
-    private static ItemStack pane(Material mat, Component name) {
-        ItemStack it = new ItemStack(mat);
-        ItemMeta meta = it.getItemMeta();
-        meta.displayName(name.decoration(TextDecoration.ITALIC, false));
-        it.setItemMeta(meta);
-        return it;
-    }
-
-    private static final class ColorPickerHolder implements InventoryHolder {
-        final UUID gameId;
-        Inventory inventory;
-
-        ColorPickerHolder(UUID gameId) {
-            this.gameId = gameId;
-        }
-
-        @Override
-        public Inventory getInventory() {
-            return inventory;
-        }
     }
 
     /** The seven-O "whose hand do you want?" window, and which slot means which player. */

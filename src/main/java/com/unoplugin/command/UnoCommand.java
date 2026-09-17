@@ -98,6 +98,7 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
             case "callout" -> callOut(sender, rest);
             case "challenge" -> respondToDraw4(sender, true);
             case "takeit" -> respondToDraw4(sender, false);
+            case "colour", "color" -> chooseColour(sender, rest);
 
             case "reload" -> reload(sender);
             case "give" -> give(sender, rest);
@@ -259,6 +260,14 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         Player player = asPlayer(sender);
         if (player != null) {
             games.respondToDraw4(player, challenge);
+        }
+    }
+
+    /** The colour buttons a wild puts in chat run this. */
+    private void chooseColour(CommandSender sender, String[] args) {
+        Player player = asPlayer(sender);
+        if (player != null) {
+            games.chooseColor(player, args.length == 0 ? null : args[0]);
         }
     }
 
