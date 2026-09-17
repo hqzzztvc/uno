@@ -1163,6 +1163,13 @@ public final class GameManager implements Listener, HandManager.CardActions {
                 "dir", game.direction() > 0 ? "↻" : "↺",
                 "deck", game.drawPileSize()));
         bar.color(barColor(active));
+        BossBar turnBar = turnBars.get(game.id());
+        if (turnBar != null) {
+            // In the colour to play, bar and text. A colour an admin writes into the line still
+            // wins over the text's.
+            turnBar.name(messages.get("game.your-turn-bar").colorIfAbsent(textColor(active)));
+            turnBar.color(barColor(active));
+        }
         for (UUID p : game.players()) {
             Player pl = Bukkit.getPlayer(p);
             if (pl != null) {

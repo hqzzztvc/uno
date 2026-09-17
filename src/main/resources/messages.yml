@@ -138,7 +138,8 @@ game:
   # the player whose turn it is can see it.
   your-turn-title: "<gold><bold>YOUR TURN"
   your-turn-subtitle: "<gray>left-click to play · right-click to draw"
-  your-turn-bar: "<green><bold>▶ YOUR TURN ◀"
+  # No colour here on purpose: the line and its bar take the colour to play. Writing one in pins the text.
+  your-turn-bar: "<bold>▶ YOUR TURN ◀"
   uno: "<gold><bold><player> has UNO!</bold> <gray>One card left."
   uno-title: "<gold><bold>UNO!"
   uno-subtitle: "<gray>One card left"
