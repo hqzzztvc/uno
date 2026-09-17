@@ -415,8 +415,9 @@ already standing.
   lives in the item's PDC, so a stack that has been through a chest still builds what it says; a
   theme deleted since then is caught at placement rather than quietly building something else. An
   item stamped `casual/<theme>` by the Kind-era build still places — `onInteract` takes the theme
-  off the back of the tag — and `/uno give casual oak` is still accepted, because an admin's
-  muscle memory shouldn't cost them a table. `/uno createtable` is **gone**.
+  off the back of the tag. The old `/uno give casual|casino <theme>` form is **not** accepted
+  any more: there is no casino table, so a command that names one is refused rather than
+  quietly building a table. `/uno createtable` is **gone**.
 - `onBlockBreak` protects a live table's 13 positions from everyone without `uno.admin`, since the
   blocks are now real and mineable. Admins are deliberately let through — which also means an admin
   testing will mine their own table and see it come back on the next restart.

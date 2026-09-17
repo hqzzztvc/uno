@@ -298,10 +298,7 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         if (player == null) {
             return;
         }
-        // Tolerate the old two-word form: an admin with `/uno give casual oak` in their
-        // muscle memory (or a macro) should get a table, not a lecture.
-        String wanted = args.length > 1 && tables.themes().get(args[0]) == null ? args[1]
-                : (args.length > 0 ? args[0] : null);
+        String wanted = args.length > 0 ? args[0] : null;
         if (wanted == null) {
             messages.send(player, "table.pick-variant", "variants", tables.themes().idList());
             return;
