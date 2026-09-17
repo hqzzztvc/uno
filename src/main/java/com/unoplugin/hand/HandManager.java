@@ -618,12 +618,28 @@ public final class HandManager implements Listener {
         }
     }
 
-    /** Q (drop key) also plays — without actually dropping the item. */
+    /**
+     * Q (drop key) also plays — without actually dropping the item.
+     *
+     * <p>The play runs <strong>next tick</strong>, never inside this event. While a drop event
+     * is being handled the fan has already been lifted out of the hand, and cancelling only
+     * puts it back into the main hand if that slot is still empty — otherwise Paper
+     * {@code addItem}s it into the first free slot. Playing a card here re-renders the fan
+     * into that empty slot, so the server's put-back became a second fan in the hotbar, which
+     * lingered until the player's hand next changed (most visibly in the colour picker).
+     * A tick is not something anyone can feel — and the client swings its arm after a drop,
+     * so the left-click handler usually plays the card first and the debounce drops this.
+     */
     @EventHandler
     public void onDropPlay(PlayerDropItemEvent event) {
-        if (isActive(event.getPlayer())) {
+        Player player = event.getPlayer();
+        if (isActive(player)) {
             event.setCancelled(true);
-            playSelected(event.getPlayer());
+            plugin.getServer().getScheduler().runTask(plugin, () -> {
+                if (player.isOnline()) {
+                    playSelected(player);
+                }
+            });
         }
     }
 

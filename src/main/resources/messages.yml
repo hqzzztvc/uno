@@ -107,6 +107,7 @@ game:
   already-in-game: "<yellow>You're already in a game. Finish it first."
   other-in-game: "<red><player> is already in a game."
   table-in-use: "<yellow>A hand is already running at that table. Wait for it to finish, or move to another table."
+  table-has-bet: "<yellow>There's a bet open at this table. <gray>Ante up with <gold>/gamble<gray>, or wait for it to settle."
   sit-first: "<yellow>Sit at a table first <gray>(stand next to one and <gold>/uno join<gray>)<yellow>, then <gold>/uno ready<yellow>."
   sit-first-play: "<yellow>Sit at a table first <gray>(stand next to one and <gold>/uno join<gray>)<yellow>, then run <gold>/uno play <bots><yellow>."
   tables-unavailable: "<red>Tables aren't available right now."
@@ -126,7 +127,11 @@ game:
   colour-green: "<green><bold>Green"
   colour-blue: "<blue><bold>Blue"
   colour-yellow: "<yellow><bold>Yellow"
-  your-turn: "<gold><bold>Your turn</bold> <gray>— left-click to play, right-click to draw"
+  # Shown the moment the turn comes round. The bar stays up for the whole turn, and only
+  # the player whose turn it is can see it.
+  your-turn-title: "<gold><bold>YOUR TURN"
+  your-turn-subtitle: "<gray>left-click to play · right-click to draw"
+  your-turn-bar: "<green><bold>▶ YOUR TURN ◀"
   uno: "<gold><bold><player> has UNO!</bold> <gray>One card left."
   uno-title: "<gold><bold>UNO!"
   uno-subtitle: "<gray>One card left"
@@ -214,9 +219,8 @@ bet:
   ready: "<green><player> is ready <gray>(<ready>/<live>)"
   not-in-bet: "<gray>You're not in this bet."
   pulled-out: "<gray><player> pulled out of the bet."
-  pot-header: "<gold><bold>POT</bold> <dark_gray>— <yellow><items> <gray>item(s) from <yellow><stakers> <gray>player(s)"
-  pot-money: "<dark_gray>   and <gold><money>"
-  pot-entry: "<dark_gray> · <white><player> <gray>— <items> item(s), <money> <dark_gray>[<status><dark_gray>]"
+  pot-header: "<gold><bold>POT</bold> <dark_gray>— <pot> <gray>from <yellow><stakers> <gray>player(s)"
+  pot-entry: "<dark_gray> · <white><player> <gray>— <stake> <dark_gray>[<status><dark_gray>]"
   pot-status-ready: "<green>ready"
   pot-status-anteing: "<yellow>anteing"
   pot-status-out: "<dark_gray>out"
@@ -234,11 +238,16 @@ bet:
   staked: "<yellow><player> <gray>stakes <white><amount>× <item> <dark_gray>(pot: <pot><dark_gray>)"
   staked-money: "<yellow><player> <gray>stakes <gold><money> <dark_gray>(pot: <pot><dark_gray>)"
   # --- money ---
-  # <pot> and <stake> below are built from these three, so a pot reads the same wherever
-  # it is quoted -- and never says "8 items" about a pot that is mostly cash.
-  stake-items: "<yellow><items> item(s)"
-  stake-money: "<gold><money>"
-  stake-both: "<yellow><items> item(s) <gray>and <gold><money>"
+  # <pot> and <stake> everywhere are built from these, so a pot reads the same wherever it
+  # is quoted -- and names what is actually in it. <items> is the entries, one per kind of
+  # item, cut off after three with stake-list-more (every one is listed on hover in chat).
+  stake-list-items: "<items>"
+  stake-list-money: "<gold><money>"
+  stake-list-both: "<items> <gray>and <gold><money>"
+  stake-list-nothing: "<gray>nothing"
+  stake-list-entry: "<yellow><amount>× <white><item>"
+  stake-list-separator: "<gray>, "
+  stake-list-more: "<gray>+<count> more"
   money-disabled: "<red>Money wagers are switched off here. <gray>Stake items instead."
   no-economy: "<red>No economy plugin is installed, so there's no money to wager. <gray>Stake items instead."
   money-short: "<red>You don't have <amount> to stake — <gray>your balance is <balance>."
@@ -273,6 +282,7 @@ bet:
   pot-label-ante: "<gold><bold>POT</bold> <pot> <gray>· ante open (<ready>/<live> ready)"
   pot-label-playing: "<gold><bold>POT</bold> <pot> <gray>· hand <hand> in play"
   pot-label-ride: "<gold><bold>POT</bold> <pot> <gray>· <player> deciding…"
+  pot-label-won: "<gold><bold><player></bold> <gray>takes <pot>"
 
 escrow:
   returned: "<prefix><gray>returned <yellow><items> <gray>item(s) held from an unfinished bet."

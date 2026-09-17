@@ -104,15 +104,6 @@ public class TableManager implements Listener {
      * than waiting for someone to sit at it.
      */
     private final Map<Long, List<UnoTable>> byChunk = new HashMap<>();
-    /**
-     * The "Let It Ride" mat, on the tables currently playing for stakes.
-     *
-     * <p>Keyed by table id and owned here rather than by the wagering layer, because it is a
-     * fixture of the table: it has to be taken down when the table is removed and put back
-     * when its chunk reloads, and both of those are this class's job. The bet layer only says
-     * when to lay it and when to lift it.
-     */
-    private final Map<UUID, TableMat> mats = new HashMap<>();
     private final NamespacedKey idKey;       // tags spawned entities with their table id
     private final NamespacedKey vehicleKey;  // tags the invisible seat mount
     private final NamespacedKey itemKey;     // stamps a table item with the theme it builds
@@ -317,13 +308,6 @@ public class TableManager implements Listener {
         for (UnoTable t : List.copyOf(here)) {
             if (event.getWorld().equals(t.anchor().getWorld())) {
                 repairIfNeeded(t);
-                // The mat is a display entity, so unlike the blocks it really did die with
-                // the chunk. spawn() is idempotent — on a table that still has its mat this
-                // is one isValid() check.
-                TableMat mat = mats.get(t.id());
-                if (mat != null) {
-                    mat.spawn();
-                }
             }
         }
     }
@@ -458,12 +442,7 @@ public class TableManager implements Listener {
             }
         }
         // The blocks stay: they are part of the world now, and a table that survives a
-        // restart is the whole point of building it out of blocks. The mat does NOT — it is
-        // a display entity, and one left behind is a decal on a table with no pot on it.
-        for (TableMat mat : mats.values()) {
-            mat.remove();
-        }
-        mats.clear();
+        // restart is the whole point of building it out of blocks.
     }
 
     private UnoTable create(String themeId, UUID id, Location anchor, float yaw) {
@@ -566,7 +545,6 @@ public class TableManager implements Listener {
                 }
             }
         }
-        hideMat(table.id());
         clearBlocks(table);
         tables.remove(table.id());
         List<UnoTable> here = byChunk.get(chunkKey(table.anchor()));
@@ -742,40 +720,6 @@ public class TableManager implements Listener {
             }
         }
         return true;
-    }
-
-    // -------------------------------------------------------------------- mat
-
-    /**
-     * Lay the "Let It Ride" mat on this table — it is playing for stakes from now on.
-     *
-     * <p>Idempotent, so the wagering layer can call it whenever a session opens without
-     * tracking whether it already did.
-     */
-    public void showMat(UnoTable table) {
-        if (table == null) {
-            return;
-        }
-        mats.computeIfAbsent(table.id(), id -> new TableMat(plugin, table)).spawn();
-    }
-
-    /** Take the mat up — the pot settled, and the table is an ordinary one again. */
-    public void hideMat(UUID tableId) {
-        TableMat mat = mats.remove(tableId);
-        if (mat != null) {
-            mat.remove();
-        }
-    }
-
-    /**
-     * How far above the felt anything sitting ON this table has to be lifted, in blocks.
-     *
-     * <p>Zero for a casual table; the mat's thickness for one playing for stakes. Both card
-     * piles and the pot ask this rather than each deciding for themselves, so there is one
-     * answer and it moves if the mat's geometry ever does.
-     */
-    public double matLift(UUID tableId) {
-        return mats.containsKey(tableId) ? TableMat.THICKNESS : 0.0;
     }
 
     // ------------------------------------------------------------------ events

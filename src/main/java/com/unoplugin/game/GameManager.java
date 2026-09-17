@@ -12,6 +12,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
+import net.kyori.adventure.title.Title;
 import org.bukkit.Bukkit;
 import org.bukkit.Color;
 import org.bukkit.Location;
@@ -30,6 +31,7 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitTask;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -61,6 +63,14 @@ public final class GameManager implements Listener, HandManager.CardActions {
     private final Map<UUID, UUID> playerGame = new HashMap<>();    // participant -> gameId
     private final Map<UUID, UUID> gameTable = new HashMap<>();     // gameId -> table it's at
     private final Map<UUID, BossBar> bars = new HashMap<>();       // gameId -> bossbar
+    /**
+     * gameId -> the "your turn" bar, shown only to whoever the table is waiting on.
+     *
+     * <p>A second bar rather than the shared one reworded, because an Adventure bar is one
+     * object every viewer sees — and a separate bar rather than an action bar, because the
+     * fan rewrites the action bar on every scroll and would wipe the notice within a second.
+     */
+    private final Map<UUID, BossBar> turnBars = new HashMap<>();
     private final Map<UUID, PileRenderer> piles = new HashMap<>(); // gameId -> table piles
     private final Map<UUID, List<BukkitTask>> turnTasks = new HashMap<>(); // gameId -> idle timers
     private final Map<UUID, String> botNames = new HashMap<>();    // bot id -> name
@@ -77,6 +87,14 @@ public final class GameManager implements Listener, HandManager.CardActions {
      * more than that apart or they overlap into one shape whichever way you look at them.
      */
     private static final double PILE_SPREAD = 0.55;
+
+    /**
+     * The "your turn" title is brief on purpose: a quick player has often already played by
+     * the time a standard-length title would fade, and it would still be telling them it's
+     * their turn. The turn bar is what lasts.
+     */
+    private static final Title.Times TURN_TITLE_TIMES = Title.Times.times(
+            Duration.ofMillis(100), Duration.ofMillis(900), Duration.ofMillis(250));
 
     /** Lets another subsystem (the wagering layer) react to how a hand ends. */
     public interface GameListener {
@@ -145,6 +163,10 @@ public final class GameManager implements Listener, HandManager.CardActions {
             messages.send(host, "game.table-in-use");
             return;
         }
+        if (hasOpenPot(table.id())) {
+            messages.send(host, "game.table-has-bet");
+            return;
+        }
         // A table has four stairs, so dealing to more than that leaves the extras standing
         // around a hand they can't sit at. startSeated already clamps to the same limit.
         botCount = Math.max(1, Math.min(botCount, table.maxPlayers() - 1));
@@ -165,6 +187,13 @@ public final class GameManager implements Listener, HandManager.CardActions {
         UnoTable table = tableManager.seatedTable(initiator.getUniqueId());
         if (table == null) {
             messages.send(initiator, "game.sit-first");
+            return;
+        }
+        if (hasOpenPot(table.id())) {
+            // The ante's heap sits in the middle of the felt, where the piles would land, and
+            // the people anteing up agreed to a hand for stakes — not to a friendly one dealt
+            // over the top of it. The bet deals its own hand when everyone locks in.
+            messages.send(initiator, "game.table-has-bet");
             return;
         }
         List<UUID> humans = new ArrayList<>();
@@ -242,6 +271,8 @@ public final class GameManager implements Listener, HandManager.CardActions {
             playerGame.put(p, gameId);
         }
         bars.put(gameId, BossBar.bossBar(Component.empty(), 1f, BossBar.Color.WHITE, BossBar.Overlay.PROGRESS));
+        turnBars.put(gameId, BossBar.bossBar(messages.get("game.your-turn-bar"), 1f,
+                BossBar.Color.GREEN, BossBar.Overlay.PROGRESS));
 
         Location centre = table.anchor();
         float pileYaw = table.yaw();
@@ -254,12 +285,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
         // Off the seat axes, every seat sees the two piles side by side instead.
         double axis = r + Math.PI / 4;
         Vector spread = new Vector(Math.cos(axis), 0, Math.sin(axis));
-        // Bottom card sits flush on whatever the top surface actually is: the felt on a
-        // casual hand, the "Let It Ride" mat on a wagered one. The mat is already down by
-        // the time the bet layer deals, so asking for the lift here gets the right answer
-        // without the game layer having to know a pot exists.
-        double lift = tableManager == null ? 0.0 : tableManager.matLift(table.id());
-        double top = centre.getY() + UnoTable.SURFACE_Y + lift;
+        double top = centre.getY() + UnoTable.SURFACE_Y; // bottom card flush on the felt
         Location discardLoc = centre.clone().add(spread.clone().multiply(-PILE_SPREAD));
         discardLoc.setY(top);
         Location drawLoc = centre.clone().add(spread.clone().multiply(PILE_SPREAD));
@@ -581,16 +607,29 @@ public final class GameManager implements Listener, HandManager.CardActions {
      * <p>Every game event re-renders the table, so this has to fire on the change rather than
      * on the render — otherwise a player gets their turn chime again every time anybody else
      * so much as draws a card.
+     *
+     * <p>Three signals, because any one of them is easy to miss: a brief title the moment the
+     * turn arrives, the chime, and the turn bar, which stays up for as long as the table is
+     * waiting on them — so a player who looked away during the title can still tell.
      */
     private void turnEffects(UnoGame game) {
         UUID current = game.currentPlayer();
-        if (current.equals(lastTurn.put(game.id(), current))) {
+        UUID previous = lastTurn.put(game.id(), current);
+        if (current.equals(previous)) {
             return;
+        }
+        BossBar turnBar = turnBars.get(game.id());
+        Player before = previous == null ? null : Bukkit.getPlayer(previous);
+        if (before != null && turnBar != null) {
+            before.hideBossBar(turnBar);
         }
         Player pl = Bukkit.getPlayer(current);
         if (pl != null) {
             fx.yourTurn(pl);
-            messages.actionBar(pl, "game.your-turn");
+            messages.title(pl, "game.your-turn-title", "game.your-turn-subtitle", TURN_TITLE_TIMES);
+            if (turnBar != null) {
+                pl.showBossBar(turnBar);
+            }
         }
         PileRenderer pile = piles.get(game.id());
         fx.turnMarker(locationOf(current, pile == null ? null : pile.discardLocation()));
@@ -862,6 +901,15 @@ public final class GameManager implements Listener, HandManager.CardActions {
         }
         if (game.isOver()) {
             cancelTurnTimer(game.id());
+            // endGame is a couple of seconds off yet; the winner shouldn't spend them being
+            // told it's their turn.
+            BossBar turnBar = turnBars.get(game.id());
+            for (UUID p : game.players()) {
+                Player pl = Bukkit.getPlayer(p);
+                if (pl != null && turnBar != null) {
+                    pl.hideBossBar(turnBar);
+                }
+            }
             return;
         }
         turnEffects(game);
@@ -995,6 +1043,7 @@ public final class GameManager implements Listener, HandManager.CardActions {
         lastTurn.remove(gid);
         onOneCard.remove(gid);
         BossBar bar = bars.remove(gid);
+        BossBar turnBar = turnBars.remove(gid);
         PileRenderer pile = piles.remove(gid);
         if (pile != null) {
             pile.remove();
@@ -1008,6 +1057,9 @@ public final class GameManager implements Listener, HandManager.CardActions {
                 handManager.hide(pl);
                 if (bar != null) {
                     pl.hideBossBar(bar);
+                }
+                if (turnBar != null) {
+                    pl.hideBossBar(turnBar);
                 }
             }
         }
@@ -1044,6 +1096,11 @@ public final class GameManager implements Listener, HandManager.CardActions {
     /** True if a hand is in progress at this table — it must not be removed underneath one. */
     public boolean hasGameAtTable(UUID tableId) {
         return tableId != null && gameTable.containsValue(tableId);
+    }
+
+    /** True if the bet layer has a pot open at this table, in any state. */
+    private boolean hasOpenPot(UUID tableId) {
+        return listener != null && listener.hasPotAtTable(tableId);
     }
 
     public List<UUID> playersOf(UUID gameId) {
@@ -1146,7 +1203,8 @@ public final class GameManager implements Listener, HandManager.CardActions {
         }
         event.setCancelled(true);
         ItemStack it = event.getCurrentItem();
-        if (it == null) {
+        // The picker's own slots only: a glass pane in the player's inventory below is not a vote.
+        if (it == null || event.getRawSlot() >= event.getInventory().getSize()) {
             return;
         }
         Card.Color color = switch (it.getType()) {
@@ -1159,11 +1217,19 @@ public final class GameManager implements Listener, HandManager.CardActions {
         if (color == null || !(event.getWhoClicked() instanceof Player p)) {
             return;
         }
-        UnoGame game = games.get(holder.gameId);
-        p.closeInventory();
-        if (game != null) {
-            handleResult(game, p.getUniqueId(), game.chooseColor(p.getUniqueId(), color), p);
-        }
+        // Next tick, not here. Bukkit forbids closing an inventory from inside its own click
+        // event, and choosing re-renders the fan — writing to the very inventory the server is
+        // still in the middle of settling this click against.
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            if (p.getOpenInventory().getTopInventory().getHolder() == holder) {
+                p.closeInventory();
+            }
+            UnoGame game = games.get(holder.gameId);
+            // Checked, because two clicks in one tick schedule two of these.
+            if (game != null && p.getUniqueId().equals(game.pendingColorPlayer())) {
+                handleResult(game, p.getUniqueId(), game.chooseColor(p.getUniqueId(), color), p);
+            }
+        });
     }
 
     @EventHandler
@@ -1221,15 +1287,20 @@ public final class GameManager implements Listener, HandManager.CardActions {
             return;
         }
         event.setCancelled(true);
-        UUID target = holder.slots.get(event.getSlot());
+        UUID target = holder.slots.get(event.getRawSlot());
         if (target == null || !(event.getWhoClicked() instanceof Player p)) {
             return;
         }
-        UnoGame game = games.get(holder.gameId);
-        p.closeInventory();
-        if (game != null) {
-            handleResult(game, p.getUniqueId(), game.chooseSwap(p.getUniqueId(), target), p);
-        }
+        // Next tick, for the same reasons as the colour picker.
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            if (p.getOpenInventory().getTopInventory().getHolder() == holder) {
+                p.closeInventory();
+            }
+            UnoGame game = games.get(holder.gameId);
+            if (game != null && p.getUniqueId().equals(game.pendingSwapPlayer())) {
+                handleResult(game, p.getUniqueId(), game.chooseSwap(p.getUniqueId(), target), p);
+            }
+        });
     }
 
     @EventHandler
@@ -1399,6 +1470,10 @@ public final class GameManager implements Listener, HandManager.CardActions {
         BossBar bar = bars.get(game.id());
         if (bar != null) {
             player.hideBossBar(bar);
+        }
+        BossBar turnBar = turnBars.get(game.id());
+        if (turnBar != null) {
+            player.hideBossBar(turnBar);
         }
         if (listener != null) {
             listener.onForfeit(game.id(), id);

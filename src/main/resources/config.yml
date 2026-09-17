@@ -109,7 +109,8 @@ rules:
 #
 #  There is no separate casino table. EVERY table plays both ways: the people sitting at
 #  it choose, per hand, between a friendly game (/uno ready) and one for stakes
-#  (/uno bet). A table with a pot on it wears the "Let It Ride" mat until it settles.
+#  (/uno bet). The pot sits in the middle of the table while people ante up, and in
+#  front of the winner once the hand is over.
 #
 #  Every table has four stairs, so max-players cannot go above 4.
 #

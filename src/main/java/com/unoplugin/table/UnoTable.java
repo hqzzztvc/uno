@@ -17,8 +17,7 @@ import java.util.UUID;
  * here, and a table was built as one thing or the other for good. That put the decision in
  * the wrong place and at the wrong time: whether this hand is being played for stakes is
  * something the four people sitting down decide, in the ten seconds before it is dealt, not
- * something an admin fixes when they place the furniture. Every table now plays both, and
- * the {@link TableMat} is what says which one is happening right now.
+ * something an admin fixes when they place the furniture. Every table now plays both.
  *
  * <p>Every table is the same shape — a 3×3 block top with a stair pulled up to the middle of
  * each side — and differs only in the blocks it is made of. Those used to be four materials

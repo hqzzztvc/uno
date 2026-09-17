@@ -82,6 +82,13 @@ keep it that way. The jar's copy of `messages.yml` is registered as the defaults
 only needs the keys they changed. Placeholder values are inserted unparsed, so a player named
 `<red>oops` can't inject formatting into a broadcast.
 
+**Changing what a message is given is a breaking change for every server with an older copy**,
+because the admin's line wins over the jar's. `Messages.staleKeys` catches it on load: an admin
+line using a placeholder the shipped line doesn't (MiniMessage's own tags aside) is replaced by
+the shipped text in memory, with one warning naming the keys. That is what `bet.ride-won`
+printing a literal `<items>` looked like. When a placeholder *keeps its name but changes
+meaning*, rename the key instead — the check can't see that.
+
 ## Regenerating pack assets
 
 There are **two** hand-authored sources, and everything under `assets/uno/` is derived from them:
@@ -99,7 +106,6 @@ Neither `assets/uno/` nor the pack's `sides.png` is hand-edited — regenerate i
 cd resourcepack
 python3 generate_card_models.py   # all 4 card families from uno_json/ + uno:<card> item defs
 python3 generate_held_fan.py      # the ~6800-file uno:held composite fan (models/item/held/)
-python3 generate_table_mat.py     # uno:letitride_mat, the flat "Let It Ride" table mat
 ```
 
 - `generate_card_models.py` **bakes the rotations into the geometry** rather than rotating at
@@ -137,18 +143,13 @@ python3 generate_table_mat.py     # uno:letitride_mat, the flat "Let It Ride" ta
   command; it is not part of gameplay. All five `CardTester`/fan debug commands require both
   `uno.admin` **and** `debug: true` in config.yml — they spawn per-tick display entities and have no
   business on a live server.
-- `generate_table_mat.py` is the **one exception to "assets/uno/ is never hand-authored"**, at
-  both ends. Its source, `assets/uno/models/item/letitride.json`, is a Blockbench export of the
-  logo that lives in the pack rather than in `uno_json/` (the other dev put it there, and
-  `generate_card_models.py` would treat anything in `uno_json/` as a card). Its output,
-  `uno:letitride_mat`, is that quad **baked lying flat** — X/Z centred on 8 and the *underside*
-  at y=8, the same trick the deck models play, so the mat spawns flush on the felt with no
-  rotation and at any scale. `TableMat.THICKNESS` is derived from that 0.5-unit thickness and
-  the display scale, and is what the card piles and the pot are lifted by; don't re-type the
-  number anywhere else. The +90° about X also leaves the logo's top edge pointing at local +Z,
-  which is the table's far side — so it reads right way up from seat 0, the side the table was
-  placed from. It imports the rotation helpers from `generate_card_models.py`, so run that
-  script's own regeneration first if `sides.png` has moved.
+- `assets/uno/models/item/letitride.json` (item `uno:letitride`) is the **one hand-authored model
+  under `assets/uno/`**: a Blockbench export of the "Let It Ride" logo, kept in the pack rather than
+  `uno_json/` because `generate_card_models.py` treats everything there as a card. **Nothing in the
+  plugin uses it.** It was briefly laid on wagered tables as a mat (`TableMat`, baked flat by a
+  `generate_table_mat.py`); that was taken out before launch, generator and all — the logo is
+  what's left of it. The model is anchored at its corner, not centred on (8, 8, 8), so re-centre it
+  before putting it on an `ItemDisplay`.
 - `generate_card_font.py` is **dead code** — an abandoned HUD-font approach. Its outputs
   (`assets/uno/font/`, `assets/uno/textures/font/`) are not in the pack and `HandFont.java` was deleted.
 - **The fan's card is a flat two-face quad, and that is deliberate.** The fan briefly parented the
@@ -173,7 +174,6 @@ all generated from the one Blockbench export in `uno_json/`:
 | `uno:<card>` | upright, face on +Z, bottom-centre at the origin | `CardTester` debug fan (`debug: true` only) |
 | `uno:flat_<card>` / `uno:down_<card>` | lying flat, face-up / face-down | `PileRenderer` (discard pile) |
 | `uno:deck_10` / `deck_50` / `deck_100` | the draw pile as one solid block of cards | `PileRenderer` (draw pile) |
-| `uno:letitride_mat` | the flat 32×32 mat, underside at y=8 | `TableMat` (a table playing for stakes) |
 | *(no item)* `uno:item/cards_held/<card>` | upright, pivot on (8,8,8), rims stripped | nothing — see the fan note above |
 | `uno:held` | one composite item, 21 select-slots | `HandManager` (the held fan; inlines its own flat quad) |
 
@@ -416,27 +416,37 @@ already standing.
   blocks are now real and mineable. Admins are deliberately let through — which also means an admin
   testing will mine their own table and see it come back on the next restart.
 
-### The "Let It Ride" mat
+### The pot on the felt
 
-A table with a live pot wears `TableMat`: one non-persistent `ItemDisplay` showing
-`uno:letitride_mat`, laid **2.9 blocks across a 3-block top** — inset a tenth of a block so it
-reads as something lying *on* the table rather than as a retexture of it, and so its edge doesn't
-overhang thin air when you look from the side.
+A wagered table has no decal any more — the "Let It Ride" mat was removed before launch. What
+marks it is the pot itself: `PotRenderer`'s staked items lying on the table, and its tally
+floating over the middle.
 
-- **`TableManager` owns the mats, not the bet layer.** They have to come up when a table is
-  removed and go back when a chunk reloads, and both of those are the table layer's job. The bet
-  layer only says *when*: `showMat` on opening an ante, `hideMat` in `close()`. `showMat`/`spawn()`
-  are idempotent, which is what lets `onChunkLoad` call it blind — on a table that still has its
-  mat it costs one `isValid()`.
-- **Everything on a wagered table is lifted by `TableMat.THICKNESS`.** `GameManager.launch` asks
-  `tableManager.matLift(tableId)` for the card piles and `BetManager.potLocation` asks for the pot;
-  neither has its own number. The constant is derived from the model's 0.5-unit thickness and the
-  display scale, so moving the geometry moves the piles with it.
-- **Order matters in `BetManager.open`:** the mat goes down *before* the `PotRenderer` is built,
-  because `potLocation` adds the lift. Build the renderer first and the pot sits inside the mat.
-- `open()` refuses at a table with a hand already running (`bet.table-busy`). Not the same check as
-  "are you in a game" — a player who sat in a free seat mid-hand isn't in it, and letting them open
-  an ante would slide the mat under piles already placed at the bare felt's height.
+- **Where the heap sits follows the session state**, and `BetManager.redraw` is the one place
+  that decides it (`anteSpot` / `winnerSpot`): in the **middle** of the table during `ANTE`,
+  **nowhere** during `PLAYING` (the card piles have the felt), and **in front of the winner's
+  seat** during `RIDE`. Letting it ride sends it back to the middle for the challenge. The
+  renderer is handed a `Spot` on every update and slides displays it already has
+  (`setTeleportDuration`) rather than respawning them.
+- **A paid-out pot lingers in front of its winner** for `PAYOUT_LINGER_TICKS`. `payout` detaches
+  the renderer from the session before `close()` and parks it in `settled`, which `open()` clears
+  for its table and `shutdown()` clears for all. Without the pause, a table with riding switched
+  off goes straight from "hidden under the cards" to "gone" and nobody sees who took it.
+- **Items rest ON the felt, so their lift depends on their shape.** The displays use no item
+  display transform, so the model is drawn at the given size centred on the entity. A flat item
+  (ingot, sword, and the sprites of doors and flowers) is rotated face-up and lifted by half its
+  one-unit thickness; a solid block item is a cube lifted by half its height. `STACK_STEP` is only
+  there to stop overlapping items z-fighting; raising it is what makes a heap hover.
+- The tally floats `TALLY_HEIGHT` over the middle of the table, above seated eye level — any lower
+  and it hangs between every pair of players.
+- `open()` refuses at a table with a hand already running (`bet.table-busy`), and
+  `GameManager.startSeated`/`startTest` refuse at a table with a pot open (`game.table-has-bet`).
+  Both are about the same square of felt: the ante heap and the card piles would land on each
+  other. The first is not the same check as "are you in a game" — a player who sat in a free
+  seat mid-hand isn't in it.
+- **Every message that quotes a pot or a stake names the items** (`stakeLabel` → `itemList`):
+  grouped by kind with `isSimilar`, the first `LABEL_ITEM_KINDS` shown and the rest as "+N more",
+  every kind on hover, names from `effectiveName()` so the client translates them.
 
 ### Sitting down, and what happens next
 
@@ -527,6 +537,15 @@ scroll), left-click/Q = play, right-click/F = draw, block break/place blocked, a
 `EntityDamageByEntityEvent` cancelled (that left-click is also a punch — without this, playing a
 card hits whoever is in front of you). Left-click fires as both an animation and an interact and
 repeats while held, hence the 250 ms play/draw debounce.
+
+**Q plays a card next tick, never inside `PlayerDropItemEvent`.** During that event the fan has
+already been lifted out of the hand, and Paper only puts a cancelled drop back into the main hand
+if the slot is still empty — otherwise it `addItem`s it wherever there's room. Playing a card
+re-renders the fan into that empty slot, so doing it inside the event left a second fan in the
+hotbar until the hand next changed. The colour and swap pickers defer their close-and-choose to
+the next tick for the related reason: Bukkit forbids closing an inventory from inside its own
+click event, and choosing writes the fan into the inventory the click is still being settled
+against.
 
 **A/D is edge-driven, not tick-driven.** `PlayerInputEvent` arrives when the key changes state, so
 a tap lands even when the server is running at 5 TPS — polling `getCurrentInput()` once a tick

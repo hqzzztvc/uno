@@ -7,6 +7,7 @@ import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import net.kyori.adventure.title.Title;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.Plugin;
 
@@ -17,8 +18,13 @@ import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Every player-facing string, loaded from {@code messages.yml} and rendered with MiniMessage.
@@ -57,7 +63,18 @@ public final class Messages {
         try (InputStream in = plugin.getResource("messages.yml")) {
             if (in != null) {
                 Reader reader = new InputStreamReader(in, StandardCharsets.UTF_8);
-                loaded.setDefaults(YamlConfiguration.loadConfiguration(reader));
+                YamlConfiguration shipped = YamlConfiguration.loadConfiguration(reader);
+                loaded.setDefaults(shipped);
+                // In memory only: the admin's file is theirs to fix, and it says which lines.
+                List<String> stale = staleKeys(loaded, shipped);
+                for (String key : stale) {
+                    loaded.set(key, shipped.getString(key));
+                }
+                if (!stale.isEmpty()) {
+                    plugin.getLogger().warning("messages.yml uses placeholders this version no "
+                            + "longer fills in, so the built-in text is shown for: "
+                            + String.join(", ", stale) + ". Update or delete those lines.");
+                }
             }
         } catch (IOException e) {
             plugin.getLogger().warning("Could not read the bundled messages.yml: " + e.getMessage());
@@ -127,13 +144,63 @@ public final class Messages {
      * uses. Either half may be blank in messages.yml; blanking both silences the title.
      */
     public void title(Audience to, String mainKey, String subKey, Object... placeholders) {
+        title(to, mainKey, subKey, DEFAULT_TITLE_TIMES, placeholders);
+    }
+
+    /** The same, on timings of the caller's choosing. */
+    public void title(Audience to, String mainKey, String subKey, Title.Times times,
+                      Object... placeholders) {
         if (to == null || (isBlank(mainKey) && isBlank(subKey))) {
             return;
         }
         Component main = isBlank(mainKey) ? Component.empty() : get(mainKey, placeholders);
         Component sub = isBlank(subKey) ? Component.empty() : get(subKey, placeholders);
-        to.showTitle(Title.title(main, sub, Title.Times.times(
-                Duration.ofMillis(200), Duration.ofMillis(1600), Duration.ofMillis(400))));
+        to.showTitle(Title.title(main, sub, times));
+    }
+
+    private static final Title.Times DEFAULT_TITLE_TIMES = Title.Times.times(
+            Duration.ofMillis(200), Duration.ofMillis(1600), Duration.ofMillis(400));
+
+    /**
+     * Keys in an admin's file that use a placeholder the shipped text for that key doesn't.
+     *
+     * <p>That is what a messages.yml copied out of an older jar looks like after the code
+     * behind a message changed what it fills in: {@code bet.ride-won} used to be given
+     * {@code <items>} and is now given {@code <pot>}, so the old line printed
+     * "&lt;items&gt; item(s) won." to the whole table. The admin's copy wins over the
+     * defaults by design, which is exactly why it has to be caught here rather than hoping
+     * every server regenerates its file on upgrade.
+     *
+     * <p>MiniMessage's own tags ({@code <gold>}, {@code <bold>}, {@code <click:…>}) are never
+     * counted, so recolouring or restyling a message is still entirely the admin's business.
+     */
+    static List<String> staleKeys(ConfigurationSection admin, ConfigurationSection shipped) {
+        List<String> stale = new ArrayList<>();
+        for (String key : admin.getKeys(true)) {
+            if (!admin.isString(key) || !shipped.isString(key)) {
+                continue;
+            }
+            Set<String> known = tagNames(shipped.getString(key));
+            for (String tag : tagNames(admin.getString(key))) {
+                if (!known.contains(tag) && !"prefix".equals(tag) && !STANDARD_TAGS.has(tag)) {
+                    stale.add(key);
+                    break;
+                }
+            }
+        }
+        return stale;
+    }
+
+    private static final TagResolver STANDARD_TAGS = TagResolver.standard();
+    private static final Pattern TAG = Pattern.compile("<(?!/)([a-zA-Z0-9_-]+)");
+
+    private static Set<String> tagNames(String raw) {
+        Set<String> names = new HashSet<>();
+        Matcher m = TAG.matcher(raw);
+        while (m.find()) {
+            names.add(m.group(1).toLowerCase(Locale.ROOT));
+        }
+        return names;
     }
 
     private TagResolver resolvers(Object... placeholders) {

@@ -8,6 +8,7 @@ import com.unoplugin.util.Messages;
 import com.unoplugin.util.NameCache;
 import com.unoplugin.util.Settings;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.TextComponent;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -40,7 +41,7 @@ import java.util.UUID;
 /**
  * "Let It Ride" — the wagering layer on top of a normal UNO hand.
  *
- * <p>The loop: <b>/gamble</b> opens an ante at your table and lays the mat on it, players
+ * <p>The loop: <b>/gamble</b> opens an ante at your table, players
  * put something up — items tossed onto the felt, or currency with <b>/gamble &lt;amount&gt;</b>
  * — <b>/gamble ready</b> locks a stake in, and when everyone's ready the table plays one hand
  * of UNO for the whole pot. The winner then chooses: cash out, or let the pot ride into the
@@ -64,8 +65,24 @@ import java.util.UUID;
  */
 public final class BetManager implements Listener, GameManager.GameListener {
 
-    /** Pot sits at the dealer's end, clear of the draw/discard piles at ±0.38 sideways. */
-    private static final double POT_FORWARD = 0.78;
+    /**
+     * How far the ante heap spreads from the middle of the table, in blocks. There are no
+     * cards down while people are anteing, so it gets the room; it stays clear of the edges
+     * of the 3×3 top even with a full-size item on its outermost slot.
+     */
+    private static final double ANTE_SPREAD = 0.8;
+    /** How far toward the winner's seat their winnings are pushed from the middle. */
+    private static final double WINNINGS_REACH = 0.75;
+    /**
+     * The winnings' shape: wide and shallow, so a heap that close to the winner's edge of the
+     * table still doesn't hang over it.
+     */
+    private static final double WINNINGS_ACROSS = 0.85;
+    private static final double WINNINGS_DEPTH = 0.4;
+    /** How long a paid-out pot stays in front of its winner before it's gone. */
+    private static final long PAYOUT_LINGER_TICKS = 40L;
+    /** How many kinds of item a pot names before it says "+N more" (all of them on hover). */
+    private static final int LABEL_ITEM_KINDS = 3;
 
     private final Plugin plugin;
     private final TableManager tables;
@@ -80,6 +97,12 @@ public final class BetManager implements Listener, GameManager.GameListener {
 
     private final Map<UUID, BetSession> byTable = new HashMap<>();  // tableId  -> session
     private final Map<UUID, UUID> byGame = new HashMap<>();         // gameId   -> tableId
+    /**
+     * tableId -> a pot that has been paid out and is sitting in front of its winner for a
+     * moment. Its session is already closed, so it is tracked here to be taken down early if
+     * a new ante opens at the table, and on shutdown.
+     */
+    private final Map<UUID, PotRenderer> settled = new HashMap<>();
 
     public BetManager(Plugin plugin, TableManager tables, GameManager games,
                       Messages messages, Settings settings, NameCache names, Fx fx) {
@@ -210,18 +233,15 @@ public final class BetManager implements Listener, GameManager.GameListener {
         BetSession s = byTable.get(table.id());
         if (s == null && games.hasGameAtTable(table.id())) {
             // Not the same as the check above: a player who sat down in a free seat after a
-            // hand was dealt isn't in it, but the table is still busy. Opening here would lay
-            // the mat under piles that were placed at the bare felt's height, so the cards
-            // would sink into it.
+            // hand was dealt isn't in it, but the table is still busy. Opening here would put
+            // the ante heap in the middle of the felt, on top of the card piles.
             messages.send(p, "bet.table-busy");
             return;
         }
         if (s == null) {
             s = new BetSession(table.id(), p.getUniqueId());
-            // The mat goes down FIRST: potLocation lifts the heap by the mat's thickness, so
-            // a renderer built before the mat exists puts the pot inside it.
-            tables.showMat(table);
-            s.setRenderer(new PotRenderer(plugin, potLocation(table), table.yaw()));
+            clearSettled(table.id()); // the last pot's winnings, still on their way out
+            s.setRenderer(new PotRenderer(plugin, surfaceCentre(table)));
             byTable.put(table.id(), s);
             // Anyone who had said they were up for a friendly hand has to say so again now
             // that there is money on it. Consent to a casual game is not consent to a wager.
@@ -316,7 +336,7 @@ public final class BetManager implements Listener, GameManager.GameListener {
         log.record("STAKE", s.tableId(), id, p.getName(), Stake.ofMoney(amount),
                 "pot=" + potDescription(s));
 
-        fx.staked(potLocation(tableOf(s)));
+        fx.staked(surfaceCentre(tableOf(s)));
         broadcast(s, messages.get("bet.staked-money",
                 "player", p.getName(),
                 "money", economy.format(amount),
@@ -403,19 +423,14 @@ public final class BetManager implements Listener, GameManager.GameListener {
             messages.send(p, "bet.no-bet");
             return;
         }
-        messages.send(p, "bet.pot-header", "items", s.potSize(), "stakers", s.stakers().size());
-        if (s.potMoney() > 0) {
-            messages.send(p, "bet.pot-money", "money", economy.format(s.potMoney()));
-        }
+        messages.send(p, "bet.pot-header", "pot", potLabel(s), "stakers", s.stakers().size());
         for (UUID staker : s.stakers()) {
             Component status = messages.get(s.isLive(staker)
                     ? (s.isReady(staker) ? "bet.pot-status-ready" : "bet.pot-status-anteing")
                     : "bet.pot-status-out");
-            Stake stake = s.stakeOf(staker);
             messages.send(p, "bet.pot-entry",
                     "player", name(staker),
-                    "items", stake.itemCount(),
-                    "money", stake.hasMoney() ? economy.format(stake.money()) : "-",
+                    "stake", stakeLabel(s.stakeOf(staker)),
                     "status", status);
         }
         if (s.state() == BetSession.State.PLAYING) {
@@ -536,7 +551,7 @@ public final class BetManager implements Listener, GameManager.GameListener {
         log.record("STAKE", s.tableId(), id, p.getName(), Stake.ofItem(stack),
                 "pot=" + potDescription(s));
 
-        fx.staked(potLocation(tableOf(s)));
+        fx.staked(surfaceCentre(tableOf(s)));
         broadcast(s, messages.get("bet.staked",
                 "player", p.getName(),
                 "amount", stack.getAmount(),
@@ -712,7 +727,7 @@ public final class BetManager implements Listener, GameManager.GameListener {
         int challenge = settings.rideChallengeSeconds();
         broadcast(s, messages.get("bet.rides", "player", p.getName(), "pot", potLabel(s)));
         broadcast(s, messages.get("bet.match-it", "seconds", challenge));
-        fx.letItRide(potLocation(tableOf(s)));
+        fx.letItRide(surfaceCentre(tableOf(s)));
         log.note("RIDE", s.tableId(), "rider=" + p.getName() + " pot=" + potDescription(s));
         redraw(s);
         UUID rider = p.getUniqueId();
@@ -774,7 +789,14 @@ public final class BetManager implements Listener, GameManager.GameListener {
         payout(s, p.getUniqueId());
     }
 
-    /** Settle: the whole pot changes hands and the session closes. */
+    /**
+     * Settle: the whole pot changes hands and the session closes.
+     *
+     * <p>The heap is shown in front of the winner for a moment on the way out, whichever way
+     * the pot got here — cashed out, unanswered, or dealt straight to them with riding
+     * switched off. The last case matters most: there the heap goes straight from hidden
+     * under the cards to paid, and without the pause nobody would ever see who took it.
+     */
     private void payout(BetSession s, UUID winner) {
         Stake pot = s.pot();
         Component label = potLabel(s);
@@ -784,8 +806,36 @@ public final class BetManager implements Listener, GameManager.GameListener {
         escrow.payTo(winner, pot);
         log.record("PAYOUT", s.tableId(), winner, name(winner), pot, "hand=" + s.handNumber());
         broadcast(s, messages.get("bet.collects", "player", name(winner), "pot", label));
-        fx.jackpot(potLocation(tableOf(s)), Bukkit.getPlayer(winner));
+        UnoTable table = tableOf(s);
+        PotRenderer.Spot winnings = table == null ? null : winnerSpot(table, winner);
+        fx.jackpot(winnings == null ? null : winnings.centre(), Bukkit.getPlayer(winner));
+        PotRenderer renderer = s.renderer();
+        if (renderer != null && winnings != null) {
+            renderer.update(pot, messages.get("bet.pot-label-won",
+                    "player", name(winner), "pot", label), winnings);
+            // Detached from the session, so close() leaves it up; it takes itself down.
+            s.setRenderer(null);
+            linger(s.tableId(), renderer);
+        }
         close(s);
+    }
+
+    /** Leave a paid-out pot on the table for a moment, then take it down. */
+    private void linger(UUID tableId, PotRenderer renderer) {
+        clearSettled(tableId);
+        settled.put(tableId, renderer);
+        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+            if (settled.remove(tableId, renderer)) {
+                renderer.remove();
+            }
+        }, PAYOUT_LINGER_TICKS);
+    }
+
+    private void clearSettled(UUID tableId) {
+        PotRenderer old = settled.remove(tableId);
+        if (old != null) {
+            old.remove();
+        }
     }
 
     // =====================================================================  refunds
@@ -824,9 +874,6 @@ public final class BetManager implements Listener, GameManager.GameListener {
             byGame.remove(s.gameId());
         }
         byTable.remove(s.tableId());
-        // The mat is what says "this table is playing for keeps". The pot is gone, so it is
-        // an ordinary table again and has to look like one.
-        tables.hideMat(s.tableId());
         if (prompt) {
             tables.promptModeAt(s.tableId(), "table.again");
         }
@@ -1002,6 +1049,10 @@ public final class BetManager implements Listener, GameManager.GameListener {
                     + " held in escrow, returned on next join");
             close(s, false);
         }
+        for (PotRenderer renderer : settled.values()) {
+            renderer.remove();
+        }
+        settled.clear();
         log.shutdown();
     }
 
@@ -1020,31 +1071,93 @@ public final class BetManager implements Listener, GameManager.GameListener {
             case RIDE -> messages.get("bet.pot-label-ride", "pot", pot,
                     "player", name(s.rideWinner()));
         };
-        s.renderer().update(s.pot(), label);
+        UnoTable table = tableOf(s);
+        // Where the heap is depends on what the table is doing: in the middle while people
+        // ante, off the felt while the cards are on it, and in front of the winner while they
+        // decide whether to let it ride. Riding sends it back to the middle for the challenge.
+        PotRenderer.Spot spot = table == null ? null : switch (s.state()) {
+            case ANTE -> anteSpot(table);
+            case PLAYING -> null;
+            case RIDE -> winnerSpot(table, s.rideWinner());
+        };
+        s.renderer().update(s.pot(), label, spot);
     }
 
     /**
-     * What is on the table, as one phrase: "12 items", "$500", or "12 items and $500".
+     * What is on the table, as one phrase: "32× Diamond, 16× Gold Ingot and $500".
      *
      * <p>Every message that quotes a pot goes through this rather than through an
      * {@code <items>} count of its own. Half the wagering messages predate money, and the way
      * they would have gone wrong is by continuing to say "8 items" over a pot that is mostly
-     * cash — technically true, and a lie about what the player is playing for.
+     * cash — technically true, and a lie about what the player is playing for. It names the
+     * items for the same reason: "8 items" doesn't say whether that's dirt or diamonds.
      */
     private Component potLabel(BetSession s) {
         return stakeLabel(s.pot());
     }
 
     private Component stakeLabel(Stake stake) {
-        boolean items = stake.itemCount() > 0;
-        if (items && stake.hasMoney()) {
-            return messages.get("bet.stake-both", "items", stake.itemCount(),
+        Component items = itemList(stake.items());
+        if (items != null && stake.hasMoney()) {
+            return messages.get("bet.stake-list-both", "items", items,
                     "money", economy.format(stake.money()));
         }
         if (stake.hasMoney()) {
-            return messages.get("bet.stake-money", "money", economy.format(stake.money()));
+            return messages.get("bet.stake-list-money", "money", economy.format(stake.money()));
         }
-        return messages.get("bet.stake-items", "items", stake.itemCount());
+        if (items != null) {
+            return messages.get("bet.stake-list-items", "items", items);
+        }
+        return messages.get("bet.stake-list-nothing");
+    }
+
+    /**
+     * The items themselves, grouped by kind: "32× Diamond, 16× Gold Ingot, +2 more", with
+     * every kind listed on hover. Null if there are none.
+     *
+     * <p>Two drops of 16 diamonds are one line of 32, not two lines of 16 — the list is what
+     * is on the table, not the order it arrived in. Names are the client's own translated
+     * item names (or the item's custom name), so they read the way the item does in hand.
+     */
+    private Component itemList(List<ItemStack> stacks) {
+        List<ItemStack> kinds = new ArrayList<>();
+        List<Integer> amounts = new ArrayList<>();
+        next:
+        for (ItemStack stack : stacks) {
+            for (int i = 0; i < kinds.size(); i++) {
+                if (kinds.get(i).isSimilar(stack)) {
+                    amounts.set(i, amounts.get(i) + stack.getAmount());
+                    continue next;
+                }
+            }
+            kinds.add(stack);
+            amounts.add(stack.getAmount());
+        }
+        if (kinds.isEmpty()) {
+            return null;
+        }
+        Component separator = messages.get("bet.stake-list-separator");
+        TextComponent.Builder shown = Component.text();
+        TextComponent.Builder all = Component.text();
+        for (int i = 0; i < kinds.size(); i++) {
+            Component entry = messages.get("bet.stake-list-entry",
+                    "amount", amounts.get(i), "item", kinds.get(i).effectiveName());
+            if (i > 0) {
+                all.append(Component.newline());
+                if (i < LABEL_ITEM_KINDS) {
+                    shown.append(separator);
+                }
+            }
+            if (i < LABEL_ITEM_KINDS) {
+                shown.append(entry);
+            }
+            all.append(entry);
+        }
+        if (kinds.size() > LABEL_ITEM_KINDS) {
+            shown.append(separator).append(messages.get("bet.stake-list-more",
+                    "count", kinds.size() - LABEL_ITEM_KINDS));
+        }
+        return shown.build().hoverEvent(HoverEvent.showText(all.build()));
     }
 
     /** The same thing for the audit log — plain, greppable, and never the economy's format. */
@@ -1095,21 +1208,43 @@ public final class BetManager implements Listener, GameManager.GameListener {
         return tables.table(s.tableId());
     }
 
-    /** Where the heap sits: on the mat at the dealer's end, clear of the card piles. */
-    private Location potLocation(UnoTable table) {
+    /** The middle of the table's top surface, or null if there's no table. */
+    private static Location surfaceCentre(UnoTable table) {
         if (table == null) {
             return null;
         }
-        Location centre = table.anchor();
-        double r = Math.toRadians(table.yaw());
-        Vector forward = new Vector(-Math.sin(r), 0, Math.cos(r));
-        Location at = centre.clone().add(forward.multiply(POT_FORWARD));
-        // On top of the mat, not through it — a pot only ever exists on a table wearing one,
-        // and the lift is the mat's own thickness rather than a number guessed to match it.
-        at.setY(centre.getY() + UnoTable.SURFACE_Y + tables.matLift(table.id()));
+        Location at = table.anchor();
+        at.setY(at.getY() + UnoTable.SURFACE_Y);
         at.setYaw(table.yaw());
         at.setPitch(0f);
         return at;
+    }
+
+    /** The ante heap: the middle of the table, where everyone buying in can see it grow. */
+    private static PotRenderer.Spot anteSpot(UnoTable table) {
+        return new PotRenderer.Spot(surfaceCentre(table), table.yaw(), ANTE_SPREAD, ANTE_SPREAD);
+    }
+
+    /**
+     * The winnings: on the table in front of the winner's seat, pushed out from the middle
+     * toward them. Falls back to the middle for a winner who isn't sitting here any more.
+     */
+    private static PotRenderer.Spot winnerSpot(UnoTable table, UUID winner) {
+        int seat = winner == null ? -1 : table.seatOf(winner);
+        if (seat < 0) {
+            return anteSpot(table);
+        }
+        Location centre = surfaceCentre(table);
+        Location chair = table.seats().get(seat);
+        Vector toward = new Vector(chair.getX() - centre.getX(), 0, chair.getZ() - centre.getZ());
+        if (toward.lengthSquared() < 1.0e-6) {
+            return anteSpot(table);
+        }
+        toward.normalize();
+        Location at = centre.clone().add(toward.clone().multiply(WINNINGS_REACH));
+        // The yaw whose forward vector (-sin, cos) points at the seat.
+        float facing = (float) Math.toDegrees(Math.atan2(-toward.getX(), toward.getZ()));
+        return new PotRenderer.Spot(at, facing, WINNINGS_ACROSS, WINNINGS_DEPTH);
     }
 
     /** Everyone with a stake in this pot, plus anyone sitting at the table watching. */
