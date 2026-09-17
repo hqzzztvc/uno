@@ -144,13 +144,10 @@ python3 generate_held_fan.py      # the ~6800-file uno:held composite fan (model
   command; it is not part of gameplay. All five `CardTester`/fan debug commands require both
   `uno.admin` **and** `debug: true` in config.yml — they spawn per-tick display entities and have no
   business on a live server.
-- `assets/uno/models/item/letitride.json` (item `uno:letitride`) is the **one hand-authored model
-  under `assets/uno/`**: a Blockbench export of the "Let It Ride" logo, kept in the pack rather than
-  `uno_json/` because `generate_card_models.py` treats everything there as a card. **Nothing in the
-  plugin uses it.** It was briefly laid on wagered tables as a mat (`TableMat`, baked flat by a
-  `generate_table_mat.py`); that was taken out before launch, generator and all — the logo is
-  what's left of it. The model is anchored at its corner, not centred on (8, 8, 8), so re-centre it
-  before putting it on an `ItemDisplay`.
+- **The pack holds nothing for "Let It Ride".** A logo model was briefly laid on wagered tables as
+  a mat (`TableMat`, baked flat by a `generate_table_mat.py`); that was taken out before launch,
+  and the leftover `uno:letitride` item, model and texture went after it. Everything under
+  `assets/uno/` is now generated.
 - `generate_card_font.py` is **dead code** — an abandoned HUD-font approach. Its outputs
   (`assets/uno/font/`, `assets/uno/textures/font/`) are not in the pack and `HandFont.java` was deleted.
 - **The fan's card is a flat two-face quad, and that is deliberate.** The fan briefly parented the
