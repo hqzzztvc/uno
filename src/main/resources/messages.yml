@@ -123,14 +123,16 @@ game:
   left: "<red><player> left the hand."
   bossbar: "<white>Top: <gold><top>  <white>| Colour: <colour>  <white>| Turn: <aqua><player> <dir>  <white>| Deck: <gray><deck>"
   # Playing a wild puts the four colours in chat, laid out the way they sit on the card: red and
-  # blue on top, yellow and green underneath. The spaces inside each button are what line the
-  # two columns up in Minecraft's default font (bold capitals are 7px, bold spaces and brackets
-  # 5px), so rewording a button means re-padding it.
+  # blue on top, yellow and green underneath. Every button is exactly 62px wide in Minecraft's
+  # default font, which is what lines both columns up. Bold capitals are 7px, bold spaces and
+  # brackets 5px, a plain space 4px, and the words differ by 7s, so bold spaces alone can't pad
+  # them evenly. That is why some padding sits outside </bold>. Rewording a button means
+  # re-padding it to 62.
   colour-prompt: "<gray>Pick a colour for your wild:<newline>  <red_button>  <blue_button><newline>  <yellow_button>  <green_button>"
-  colour-red-button: "<red><bold>[   RED   ]"
-  colour-blue-button: "<blue><bold>[   BLUE   ]"
+  colour-red-button: "<red><bold>[   RED</bold>    <bold>]"
+  colour-blue-button: "<blue><bold>[</bold>   <bold>BLUE</bold>   <bold>]"
   colour-yellow-button: "<yellow><bold>[ YELLOW ]"
-  colour-green-button: "<green><bold>[  GREEN  ]"
+  colour-green-button: "<green><bold>[ </bold> <bold>GREEN</bold>  <bold>]"
   no-colour: "<gray>There's no wild waiting on a colour from you."
   # Shown the moment the turn comes round. The bar stays up for the whole turn, and only
   # the player whose turn it is can see it.

@@ -80,6 +80,12 @@ public final class PotRenderer {
      * over the middle of the table, and any lower it sits between every pair of players.
      */
     private static final double TALLY_HEIGHT = 1.6;
+    /**
+     * Text is drawn at 1/40 block a pixel and wraps at 200 pixels, so at full size a long pot
+     * spreads five blocks wide over a three-block table and fills the view of anyone seated.
+     * 0.6 caps it at the table's own width.
+     */
+    private static final float TALLY_SCALE = 0.6f;
     /** Ticks a display takes to slide when the heap moves or re-lays. */
     private static final int SLIDE_TICKS = 6;
     private static final long LAYOUT_SEED = 0x150D5L;
@@ -146,6 +152,11 @@ public final class PotRenderer {
                 d.setDefaultBackground(false);
                 d.setBackgroundColor(org.bukkit.Color.fromARGB(140, 0, 0, 0));
                 d.setBrightness(new Display.Brightness(15, 15));
+                d.setTransformation(new Transformation(
+                        new Vector3f(0f, 0f, 0f),
+                        new Quaternionf(),
+                        new Vector3f(TALLY_SCALE, TALLY_SCALE, TALLY_SCALE),
+                        new Quaternionf()));
                 d.setPersistent(false);
                 d.getPersistentDataContainer().set(tag, PersistentDataType.BYTE, (byte) 1);
             });
