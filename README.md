@@ -15,7 +15,7 @@ client-side resource pack.
 |---|---|
 | Server | Paper **26.2** (Folia not supported) |
 | Java | **25** |
-| Client | The `UNO-pack.zip` resource pack, installed manually |
+| Client | The `Legally Not Uno Textures.zip` resource pack, installed manually |
 
 ## Installing
 
@@ -24,10 +24,10 @@ client-side resource pack.
 
    ```bash
    cd resourcepack
-   zip -qr ../UNO-pack.zip pack.mcmeta assets -x '*.DS_Store'
+   zip -qr "../Legally Not Uno Textures.zip" pack.mcmeta pack.png assets -x '*.DS_Store'
    ```
 
-   Copy `UNO-pack.zip` into `.minecraft/resourcepacks/` and enable it in **Options → Resource Packs**.
+   Copy `Legally Not Uno Textures.zip` into `.minecraft/resourcepacks/` and enable it in **Options → Resource Packs**.
 
    Or host the zip yourself and let the server offer it on join — set `resource-pack.url.link` (and
    `sha1`, so clients cache it) in `config.yml`. The plugin never hosts the pack itself.

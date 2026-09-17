@@ -58,8 +58,9 @@ There is no linter. Everything outside the rules layer needs a Paper 26.2 server
 
 ```bash
 cp target/uno-1.0.jar server/plugins/uno-1.0.jar
-cd resourcepack && zip -qr ../UNO-pack.zip pack.mcmeta assets -x '*.DS_Store'
-# then copy UNO-pack.zip into the *client's* resourcepacks folder and enable it
+cd resourcepack && zip -qr "../Legally Not Uno Textures.zip" pack.mcmeta pack.png assets -x '*.DS_Store'
+# then copy "Legally Not Uno Textures.zip" into the *client's* resourcepacks folder and enable it
+# (the pack list titles a pack by its file or folder name; pack.png is the card back, squared)
 ```
 
 The plugin does **not** host the pack. It will *offer* one if `resource-pack.url.link` points at a zip

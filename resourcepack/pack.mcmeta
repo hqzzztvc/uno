@@ -4,6 +4,12 @@
     "supported_formats": [46, 64],
     "min_format": 46,
     "max_format": 120,
-    "description": "UNO — cards & table art"
+    "description": [
+      {"text": "Legally ", "color": "#FF4040", "bold": true},
+      {"text": "Not ", "color": "#FFE05C", "bold": true},
+      {"text": "Uno", "color": "#44BC40", "bold": true},
+      {"text": " — ", "color": "gray", "bold": true},
+      {"text": "cards", "color": "#006AFF", "bold": true}
+    ]
   }
 }
