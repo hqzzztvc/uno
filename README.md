@@ -39,9 +39,9 @@ client-side resource pack.
 Build a table, sit down, deal:
 
 ```
-/uno give casual <theme>   # admin — hands you a placeable table item
-                           # right-click the ground with it to build the table
-                           # cherry | spruce | mangrove | darkoak | …, or your own
+/uno give <theme>      # admin — hands you a placeable table item
+                       # right-click the ground with it to build the table
+                       # cherry | spruce | mangrove | darkoak | …, or your own
 /uno join              # stand next to a table and take the nearest free seat
 /uno leave             # get up (Shift does the same)
 /uno quit              # drop out of the hand you're in — others play on
@@ -143,7 +143,7 @@ Build one in game rather than by hand:
 ```
 /uno theme create marble    # opens a 3×3 grid with a seat slot on each side
                             # drop blocks in, hit Save
-/uno give casual marble     # hand out a table wearing it
+/uno give marble            # hand out a table wearing it
 ```
 
 Blocks placed in the editor are always given back when it closes — designing a theme costs
@@ -237,7 +237,7 @@ All subcommands tab-complete; admin ones are hidden from players who can't use t
 | `/uno callout <player>` | `uno.play` | Catch a player on one card who never called |
 | `/uno version` | `uno.play` | Plugin version |
 | `/gamble …` | `uno.gamble` | Wagering — see above (aliases: `/bet`, `/ante`, `/letitride`) |
-| `/uno give <casual\|casino> <theme>` | `uno.admin` | A placeable table item; right-click the ground with it. Casino is not implemented yet |
+| `/uno give <theme>` | `uno.admin` | A placeable table item; right-click the ground with it. Every table plays casual or for stakes |
 | `/uno theme <list\|create\|edit\|delete> [id]` | `uno.admin` | Design the blocks a table is built from, in a 3×3 GUI |
 | `/uno remove` | `uno.admin` | Remove the nearest table within 5 blocks (refused mid-hand) |
 | `/uno list` | `uno.admin` | Every placed table: id, world, coordinates, occupancy |
