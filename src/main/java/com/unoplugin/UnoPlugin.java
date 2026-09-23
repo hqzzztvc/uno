@@ -13,6 +13,7 @@ import com.unoplugin.util.Messages;
 import com.unoplugin.util.NameCache;
 import com.unoplugin.util.ResourcePackSender;
 import com.unoplugin.util.Settings;
+import com.unoplugin.util.UpdateChecker;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.command.TabCompleter;
@@ -38,10 +39,11 @@ public final class UnoPlugin extends JavaPlugin {
     private HandManager handManager;
     private GameManager gameManager;
     private BetManager betManager;
+    private UpdateChecker updates;
 
     @Override
     public void onEnable() {
-        saveDefaultConfig();
+        // Both install their file on first run and bring an older one up to date; see ShippedYaml.
         settings = new Settings(this);
         messages = new Messages(this);
         fx = new Fx(settings);
@@ -89,8 +91,12 @@ public final class UnoPlugin extends JavaPlugin {
 
         events.registerEvents(new ResourcePackSender(this, settings), this);
 
+        updates = new UpdateChecker(this, settings, messages);
+        events.registerEvents(updates, this);
+        updates.start();
+
         registerCommand("uno", new UnoCommand(this, messages, settings, tableManager,
-                gameManager, betManager, handManager, cardTester, themeEditor));
+                gameManager, betManager, handManager, cardTester, themeEditor, updates));
         registerCommand("gamble", new GambleCommand(betManager, messages));
 
         getLogger().info("UNO v" + getPluginMeta().getVersion() + " enabled.");
@@ -129,6 +135,9 @@ public final class UnoPlugin extends JavaPlugin {
         if (tableManager != null) {
             tableManager.save();
             tableManager.shutdown();
+        }
+        if (updates != null) {
+            updates.shutdown();
         }
         getLogger().info("UNO disabled. The dealer is always here.");
     }

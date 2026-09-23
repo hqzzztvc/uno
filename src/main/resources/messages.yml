@@ -12,8 +12,9 @@
 #  player called "<red>x" can't inject colour. Each message lists the ones it accepts;
 #  you may drop any of them, but a name the plugin doesn't supply stays as literal text.
 #
-#  Keys missing from this file fall back to the version shipped inside the jar, so a
-#  partial file is safe — you only need to list what you want to change.
+#  Updating the plugin keeps every line you've changed. New messages are added to this
+#  file, and lines you never touched follow the new wording; the old copy goes in
+#  backups/. A key missing from the file falls back to the version inside the jar.
 
 # Prepended wherever a message uses <prefix>.
 prefix: "<gold><bold>UNO</bold></gold> <dark_gray>|</dark_gray> "
@@ -51,6 +52,14 @@ plugin:
   help-end: "<yellow>/uno end <player|all> <gray>— force a hand to finish"
   help-refund: "<yellow>/uno refund <player|all> <gray>— settle a stuck pot back to its stakers"
   help-reload: "<yellow>/uno reload <gray>— re-read config.yml and messages.yml"
+  # <file> is config.yml, messages.yml or themes.yml; <error> is what's wrong and where.
+  reload-failed: "<red>Couldn't reload <file>: <gray><error>. <red>It's unchanged, and what it said before is still in use."
+  # Told to admins (uno.admin) as they join and in /uno version, after asking Modrinth.
+  # <latest> and <current> are version numbers; <download> is the button below, which
+  # opens the plugin's Modrinth page. Blank a line to stop it being sent.
+  update-available: "<gold>Legally Not Uno <white><latest></white> is out <gray>(you're on <current>) <download>"
+  update-download-button: "<aqua><underlined>Download</underlined>"
+  update-current: "<gray>Legally Not Uno is up to date <dark_gray>(<current>)"
 
 table:
   # Shown the moment a player sits down, and again when a hand finishes. <ready> and <bet>
@@ -100,6 +109,7 @@ theme:
   saved: "<green>Saved theme <yellow><theme><green>. <gray>Hand it out with <yellow>/uno give <theme><gray>."
   deleted: "<green>Deleted theme <yellow><theme><green>."
   undeletable: "<red>Can't delete <yellow><theme><red> — it's built in, missing, or the only one left."
+  file-broken: "<red>themes.yml has a mistake in it, so nothing can be saved to it. <gray>Fix it, run <yellow>/uno reload<gray>, then save again."
 
 game:
   started: "<gold><bold>UNO</bold> <gray>started — <count> players. Good luck!"
@@ -296,3 +306,6 @@ escrow:
   returned: "<prefix><gray>returned <yellow><items> <gray>item(s) held from an unfinished bet."
   returned-money: "<prefix><gray>returned <gold><money> <gray>held from an unfinished bet."
   inventory-full: "<gray>Your inventory was full — the rest dropped at your feet."
+
+# Which layout this file is in. UNO updates it when it updates the file -- leave it be.
+messages-version: 1

@@ -7,7 +7,13 @@
 #
 #  Player-facing text lives in messages.yml, not here.
 #
-#  Reload with /uno reload (re-reads this file and messages.yml).
+#  Reload with /uno reload (re-reads this file and messages.yml). A mistake in the
+#  file is reported there and in the console, and the settings it last loaded with
+#  stay in force until it's fixed -- nothing quietly resets to defaults.
+#
+#  Updating the plugin never changes a value you've set. New settings are added to
+#  this file with their defaults and explanations, the old copy goes in backups/,
+#  and anything this version no longer reads is named in the console on startup.
 
 # ---- Resource Pack ----
 #
@@ -209,9 +215,21 @@ effects:
   # category, so a player can also turn them down themselves.
   volume: 1.0
 
+# ---- Updates ----
+#
+#  When the server starts, and whenever someone with uno.admin joins or runs
+#  /uno version, UNO asks Modrinth whether a newer release is out and tells them in
+#  chat, with a link to download it. It only reads the public list of versions --
+#  nothing is downloaded or installed for you.
+update-checker:
+  enabled: true
+
 # ---- Debug ----
 #
 #  Enables the throwaway development commands (/uno testcards, /uno hand,
 #  /uno cleartest, /uno fan, /uno fanclear). They spawn per-tick display entities
 #  and are not meant for a live server.
 debug: false
+
+# Which layout this file is in. UNO updates it when it updates the file -- leave it be.
+config-version: 1

@@ -1,16 +1,24 @@
 package com.unoplugin.table;
 
+import com.unoplugin.util.ShippedYaml;
 import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.Plugin;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.logging.Logger;
 
 /**
  * Every table theme the server knows, loaded from {@code plugins/UNO/themes.yml}.
@@ -24,25 +32,73 @@ import java.util.Map;
  * <p>The file is also written at runtime by the in-game editor, so this class owns saving as
  * well as loading. It keeps insertion order, so a hand-written file stays in the order it was
  * written rather than being alphabetised out from under its author.
+ *
+ * <p>A built-in added by a later release reaches servers that installed an earlier one: the
+ * file records which built-ins it has been given ({@value #OFFERED}), and anything in
+ * {@link #builtIns()} not on that list is added once. Recording what was <em>offered</em>
+ * rather than checking what is present is the point — a built-in an admin deleted by hand
+ * stays deleted.
  */
 public final class ThemeStore {
 
-    private final Plugin plugin;
+    static final String OFFERED = "built-ins-offered";
+
     private final File file;
+    private final Logger log;
     private final Map<String, TableTheme> themes = new LinkedHashMap<>();
+    /** Every built-in id this file has been given, whether or not it still has it. */
+    private final Set<String> offered = new LinkedHashSet<>();
+    /** Set while themes.yml doesn't parse: nothing may be written over it, or built from it. */
+    private boolean unreadable;
 
     public ThemeStore(Plugin plugin) {
-        this.plugin = plugin;
-        this.file = new File(plugin.getDataFolder(), "themes.yml");
+        this(plugin.getDataFolder(), plugin.getLogger());
     }
 
-    /** Read themes.yml, writing the built-in themes out first if it isn't there yet. */
-    public void load() {
-        themes.clear();
+    ThemeStore(File dataFolder, Logger log) {
+        this.file = new File(dataFolder, "themes.yml");
+        this.log = log;
+    }
+
+    /**
+     * Read themes.yml, writing the built-in themes out first if it isn't there yet, and adding
+     * any built-in a newer release ships that this file has never been given.
+     *
+     * @return null, or why themes.yml can't be used. The file is then left exactly as it is,
+     *         {@link #unreadable()} is true until it loads, and the themes already in memory
+     *         stay in use — or, at startup when there are none, the built-ins stand in.
+     */
+    public String load() {
         if (!file.exists()) {
+            themes.clear();
+            offered.clear();
+            unreadable = false;
             writeDefaults();
         }
-        YamlConfiguration yml = YamlConfiguration.loadConfiguration(file);
+        YamlConfiguration yml = new YamlConfiguration();
+        try {
+            yml.loadFromString(Files.readString(file.toPath(), StandardCharsets.UTF_8));
+        } catch (IOException | InvalidConfigurationException e) {
+            String why = e instanceof InvalidConfigurationException bad
+                    ? ShippedYaml.describe(bad) : "it could not be read (" + e.getMessage() + ")";
+            unreadable = true;
+            // On /uno reload, what the file said last time is still the best answer there is.
+            boolean keeping = !themes.isEmpty();
+            if (!keeping) {
+                for (TableTheme t : builtIns()) {
+                    themes.put(t.id(), t);
+                }
+            }
+            log.severe("themes.yml can't be used: " + why + ". Nothing in it has been changed, "
+                    + "and tables won't be rebuilt or saved over it until it's fixed and "
+                    + "/uno reload is run. " + (keeping
+                    ? "Until then the themes it had when it last loaded stay in use."
+                    : "Until then only the built-in themes can be handed out."));
+            return why;
+        }
+        themes.clear();
+        offered.clear();
+        unreadable = false;
         ConfigurationSection root = yml.getConfigurationSection("themes");
         if (root != null) {
             for (String key : root.getKeys(false)) {
@@ -58,27 +114,88 @@ public final class ThemeStore {
         }
         if (themes.isEmpty()) {
             // A file that parsed to nothing (emptied, or every entry malformed) would leave
-            // /uno give with nothing to hand out and no way to recover in game.
-            plugin.getLogger().warning("themes.yml has no usable themes — falling back to the "
+            // /uno give with nothing to hand out and no way to recover in game. Nothing is
+            // written back: those entries are the admin's to fix, not ours to replace.
+            log.warning("themes.yml has no usable themes — falling back to the "
                     + "built-in ones. Fix the file and run /uno reload.");
             for (TableTheme t : builtIns()) {
                 themes.put(t.id(), t);
             }
+        } else {
+            addNewBuiltIns(yml);
         }
-        plugin.getLogger().info("Loaded " + themes.size() + " table theme(s).");
+        log.info("Loaded " + themes.size() + " table theme(s).");
+        return null;
+    }
+
+    /**
+     * Give this file any built-in it has never been offered.
+     *
+     * <p>A file from before the list existed is taken to have been offered exactly the
+     * built-ins it holds, which is what every earlier release wrote on first run.
+     *
+     * <p>The new entries are added to the file as it was read rather than by {@link #save()}
+     * rewriting it from memory, so an entry that failed to load, or a comment someone wrote,
+     * comes through untouched.
+     */
+    private void addNewBuiltIns(YamlConfiguration yml) {
+        boolean recorded = yml.isList(OFFERED);
+        if (recorded) {
+            for (String id : yml.getStringList(OFFERED)) {
+                offered.add(TableTheme.normaliseId(id));
+            }
+        } else {
+            for (TableTheme t : themes.values()) {
+                if (t.builtIn()) {
+                    offered.add(t.id());
+                }
+            }
+        }
+        List<String> added = new ArrayList<>();
+        boolean grew = false;
+        for (TableTheme t : builtIns()) {
+            if (!offered.add(t.id())) {
+                continue;
+            }
+            grew = true;
+            // An admin's own theme that happens to share a new built-in's id is theirs, and
+            // stays exactly as it is.
+            if (themes.putIfAbsent(t.id(), t) == null) {
+                write(yml, t);
+                added.add(t.id());
+            }
+        }
+        if (recorded && !grew) {
+            return;
+        }
+        writeOffered(yml);
+        try {
+            yml.save(file);
+        } catch (IOException e) {
+            log.severe("Could not save themes.yml: " + e.getMessage());
+        }
+        if (!added.isEmpty()) {
+            log.info("Added the built-in table theme(s) this version brings: "
+                    + String.join(", ", added) + ".");
+        }
+    }
+
+    /** True while themes.yml doesn't parse: tables must not be rebuilt from the stand-ins. */
+    public boolean unreadable() {
+        return unreadable;
     }
 
     private TableTheme read(String id, ConfigurationSection s) {
         List<?> rows = s.getList("grid");
         if (rows == null || rows.size() != TableTheme.SIZE) {
-            plugin.getLogger().warning("Theme '" + id + "' needs a grid of exactly "
+            log.warning("Theme '" + id + "' needs a grid of exactly "
                     + TableTheme.SIZE + " rows — skipped.");
             return null;
         }
         BlockSpec[][] grid = new BlockSpec[TableTheme.SIZE][TableTheme.SIZE];
         for (int r = 0; r < TableTheme.SIZE; r++) {
             if (!(rows.get(r) instanceof List<?> row) || row.size() != TableTheme.SIZE) {
-                plugin.getLogger().warning("Theme '" + id + "' row " + (r + 1) + " needs exactly "
+                log.warning("Theme '" + id + "' row " + (r + 1) + " needs exactly "
                         + TableTheme.SIZE + " blocks — skipped.");
                 return null;
             }
@@ -104,10 +221,18 @@ public final class ThemeStore {
         return new TableTheme(id, name, grid, seats, builtIn);
     }
 
-    /** Add or replace a theme and write the file. Used by the in-game editor. */
-    public void put(TableTheme theme) {
+    /**
+     * Add or replace a theme and write the file. Used by the in-game editor.
+     *
+     * @return false, with nothing changed, while themes.yml has a mistake in it
+     */
+    public boolean put(TableTheme theme) {
+        if (unreadable) {
+            return false; // save() would refuse anyway; don't keep a theme that only lives in RAM
+        }
         themes.put(theme.id(), theme);
         save();
+        return true;
     }
 
     /**
@@ -154,6 +279,13 @@ public final class ThemeStore {
     // ------------------------------------------------------------------ writing
 
     public void save() {
+        if (unreadable) {
+            // Everything in memory is a stand-in; writing it would replace every theme the
+            // admin made with the built-ins.
+            log.severe("Not saving themes.yml: it has a mistake in it that needs fixing first. "
+                    + "Fix it, run /uno reload, then save the theme again.");
+            return;
+        }
         YamlConfiguration yml = new YamlConfiguration();
         yml.options().setHeader(List.of(
                 "UNO table themes.",
@@ -176,40 +308,57 @@ public final class ThemeStore {
                 "",
                 "seats accepts one block for all four, or near/far/left/right individually."));
         for (TableTheme t : themes.values()) {
-            String base = "themes." + t.id();
-            yml.set(base + ".name", t.displayName());
-            if (t.builtIn()) {
-                yml.set(base + ".built-in", true);
-            }
-            List<List<String>> rows = new ArrayList<>(TableTheme.SIZE);
-            for (int r = 0; r < TableTheme.SIZE; r++) {
-                List<String> row = new ArrayList<>(TableTheme.SIZE);
-                for (int c = 0; c < TableTheme.SIZE; c++) {
-                    row.add(t.cell(r, c).written());
-                }
-                rows.add(row);
-            }
-            yml.set(base + ".grid", rows);
-            for (TableTheme.Seat seat : TableTheme.Seat.values()) {
-                yml.set(base + ".seats." + seat.key(), t.seat(seat).written());
-            }
+            write(yml, t);
         }
+        writeOffered(yml);
         try {
-            if (!plugin.getDataFolder().exists()) {
-                plugin.getDataFolder().mkdirs();
+            File folder = file.getParentFile();
+            if (folder != null && !folder.exists()) {
+                folder.mkdirs();
             }
             yml.save(file);
         } catch (IOException e) {
-            plugin.getLogger().severe("Could not save themes.yml: " + e.getMessage());
+            log.severe("Could not save themes.yml: " + e.getMessage());
         }
+    }
+
+    private static void write(YamlConfiguration yml, TableTheme t) {
+        String base = "themes." + t.id();
+        yml.set(base + ".name", t.displayName());
+        if (t.builtIn()) {
+            yml.set(base + ".built-in", true);
+        }
+        List<List<String>> rows = new ArrayList<>(TableTheme.SIZE);
+        for (int r = 0; r < TableTheme.SIZE; r++) {
+            List<String> row = new ArrayList<>(TableTheme.SIZE);
+            for (int c = 0; c < TableTheme.SIZE; c++) {
+                row.add(t.cell(r, c).written());
+            }
+            rows.add(row);
+        }
+        yml.set(base + ".grid", rows);
+        for (TableTheme.Seat seat : TableTheme.Seat.values()) {
+            yml.set(base + ".seats." + seat.key(), t.seat(seat).written());
+        }
+    }
+
+    private void writeOffered(YamlConfiguration yml) {
+        yml.set(OFFERED, new ArrayList<>(offered));
+        // Bukkit writes a null comment line as a blank line; "" would come out as a bare '#'.
+        yml.setComments(OFFERED, Arrays.asList(
+                null,
+                "The built-in themes this file has been given. Leave it alone: it is how an",
+                "update adds a new built-in without putting back one you deleted."));
     }
 
     private void writeDefaults() {
         for (TableTheme t : builtIns()) {
             themes.put(t.id(), t);
+            offered.add(t.id());
         }
         save();
         themes.clear(); // load() reads them straight back, so there is one code path in
+        offered.clear();
     }
 
     // ------------------------------------------------------------- the built-ins

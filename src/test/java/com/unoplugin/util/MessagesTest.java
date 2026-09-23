@@ -59,6 +59,13 @@ class MessagesTest {
         assertTrue(Messages.staleKeys(admin, shipped).isEmpty());
     }
 
+    /** See {@code SettingsTest.theConfigVersionMatchesTheMigrations} — the same rule. */
+    @Test
+    void theMessagesVersionMatchesTheMigrations() throws Exception {
+        YamlConfiguration shipped = ShippedYaml.parse(ShippedYamlTest.bundled("messages.yml"));
+        SettingsTest.assertVersionMatches(shipped.getInt("messages-version"), Messages.MIGRATIONS);
+    }
+
     /** The jar's own file has to pass its own check, or every fresh install warns. */
     @Test
     void theBundledFileIsNotStaleAgainstItself() throws Exception {

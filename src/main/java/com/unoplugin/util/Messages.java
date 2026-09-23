@@ -3,6 +3,7 @@ package com.unoplugin.util;
 import net.kyori.adventure.audience.Audience;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
+import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
@@ -11,12 +12,6 @@ import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.Plugin;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.Reader;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -30,8 +25,9 @@ import java.util.regex.Pattern;
  * Every player-facing string, loaded from {@code messages.yml} and rendered with MiniMessage.
  *
  * <p>The file shipped inside the jar is installed on first run and also registered as the
- * <em>defaults</em>, so an admin's copy only needs the keys they actually want to change and
- * a plugin upgrade that adds new keys can't leave holes.
+ * <em>defaults</em>. {@link ShippedYaml} keeps an admin's copy current across updates: new
+ * messages are added to it, lines the admin never edited follow the jar's rewording, and lines
+ * they did edit are left alone.
  *
  * <p>Placeholder values are inserted <strong>unparsed</strong> unless they are already a
  * {@link Component}: a player named {@code <red>oops} cannot smuggle formatting (or a click
@@ -41,8 +37,17 @@ public final class Messages {
 
     private static final MiniMessage MM = MiniMessage.miniMessage();
 
+    /**
+     * Every rename messages.yml has had, oldest first — see {@link ShippedYaml.Migration}.
+     * Adding or rewording a message needs nothing here: new keys are merged in, and a line an
+     * admin never edited is moved on to the new wording by itself. Moving a message to a new
+     * key does need a step here (and {@code messages-version} bumped in messages.yml), or an
+     * admin's translation of it is left behind under the old name.
+     */
+    static final List<ShippedYaml.Migration> MIGRATIONS = List.of();
+
     private final Plugin plugin;
-    private final File file;
+    private final ShippedYaml file;
     private final Set<String> warned = new HashSet<>();
 
     private YamlConfiguration cfg = new YamlConfiguration();
@@ -50,38 +55,35 @@ public final class Messages {
 
     public Messages(Plugin plugin) {
         this.plugin = plugin;
-        this.file = new File(plugin.getDataFolder(), "messages.yml");
+        this.file = new ShippedYaml(plugin, "messages.yml", "messages-version", true, MIGRATIONS);
         reload();
     }
 
-    /** Re-read messages.yml from disk (and re-apply the jar's copy as defaults). */
-    public void reload() {
-        if (!file.exists()) {
-            plugin.saveResource("messages.yml", false);
+    /**
+     * Re-read messages.yml, upgrading it first if this jar ships messages it doesn't have or
+     * has reworded ones the admin never touched.
+     *
+     * @return null, or why messages.yml can't be used — in which case the text it last loaded
+     *         with stays in force.
+     */
+    public String reload() {
+        ShippedYaml.Loaded loaded = file.load();
+        YamlConfiguration messages = loaded.config();
+        YamlConfiguration shipped = file.shipped();
+        // In memory only: the admin's file is theirs to fix, and it says which lines.
+        List<String> stale = staleKeys(messages, shipped);
+        for (String key : stale) {
+            messages.set(key, shipped.getString(key));
         }
-        YamlConfiguration loaded = YamlConfiguration.loadConfiguration(file);
-        try (InputStream in = plugin.getResource("messages.yml")) {
-            if (in != null) {
-                Reader reader = new InputStreamReader(in, StandardCharsets.UTF_8);
-                YamlConfiguration shipped = YamlConfiguration.loadConfiguration(reader);
-                loaded.setDefaults(shipped);
-                // In memory only: the admin's file is theirs to fix, and it says which lines.
-                List<String> stale = staleKeys(loaded, shipped);
-                for (String key : stale) {
-                    loaded.set(key, shipped.getString(key));
-                }
-                if (!stale.isEmpty()) {
-                    plugin.getLogger().warning("messages.yml uses placeholders this version no "
-                            + "longer fills in, so the built-in text is shown for: "
-                            + String.join(", ", stale) + ". Update or delete those lines.");
-                }
-            }
-        } catch (IOException e) {
-            plugin.getLogger().warning("Could not read the bundled messages.yml: " + e.getMessage());
+        if (!stale.isEmpty()) {
+            plugin.getLogger().warning("messages.yml uses placeholders this version no "
+                    + "longer fills in, so the built-in text is shown for: "
+                    + String.join(", ", stale) + ". Update or delete those lines.");
         }
-        this.cfg = loaded;
-        this.prefix = loaded.getString("prefix", "");
+        this.cfg = messages;
+        this.prefix = messages.getString("prefix", "");
         warned.clear();
+        return loaded.error();
     }
 
     /**
@@ -115,6 +117,17 @@ public final class Messages {
      */
     public Component button(String labelKey, String command, Object... placeholders) {
         return get(labelKey, placeholders).clickEvent(ClickEvent.runCommand(command));
+    }
+
+    /**
+     * A chat link: a label from messages.yml that opens {@code url} when clicked and shows it on
+     * hover. The address is set in Java, like a button's command, so the label can be reworded
+     * or translated without anyone having to copy a URL around.
+     */
+    public Component link(String labelKey, String url, Object... placeholders) {
+        return get(labelKey, placeholders)
+                .clickEvent(ClickEvent.openUrl(url))
+                .hoverEvent(HoverEvent.showText(Component.text(url)));
     }
 
     /** True if the message resolves to something worth sending (not blank). */

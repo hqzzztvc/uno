@@ -47,8 +47,28 @@
     </dependencies>
 
     <build>
-        <!-- Produces target/uno-1.0.jar -->
-        <finalName>uno-1.0</finalName>
+        <!-- Produces target/uno-<version>.jar. <version> above is the plugin's one version
+             number: plugin.yml is filled in from it, and the update checker compares it with
+             the version numbers published on Modrinth. -->
+        <finalName>${project.artifactId}-${project.version}</finalName>
+        <resources>
+            <!-- Only plugin.yml is filtered. messages.yml is full of <tags> and config.yml
+                 is the admin's to write; neither should ever have ${...} expanded in it. -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>plugin.yml</include>
+                </includes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <excludes>
+                    <exclude>plugin.yml</exclude>
+                </excludes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

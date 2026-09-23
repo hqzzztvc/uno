@@ -12,6 +12,7 @@ import com.unoplugin.table.ThemeEditor;
 import com.unoplugin.table.UnoTable;
 import com.unoplugin.util.Messages;
 import com.unoplugin.util.Settings;
+import com.unoplugin.util.UpdateChecker;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -58,10 +59,11 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
     private final HandManager hands;
     private final CardTester tester;
     private final ThemeEditor themeEditor;
+    private final UpdateChecker updates;
 
     public UnoCommand(UnoPlugin plugin, Messages messages, Settings settings, TableManager tables,
                       GameManager games, BetManager bets, HandManager hands, CardTester tester,
-                      ThemeEditor themeEditor) {
+                      ThemeEditor themeEditor, UpdateChecker updates) {
         this.plugin = plugin;
         this.messages = messages;
         this.settings = settings;
@@ -71,6 +73,7 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         this.hands = hands;
         this.tester = tester;
         this.themeEditor = themeEditor;
+        this.updates = updates;
     }
 
     @Override
@@ -85,8 +88,7 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         String[] rest = Arrays.copyOfRange(args, 1, args.length);
         switch (args[0].toLowerCase(Locale.ROOT)) {
             case "help" -> help(sender);
-            case "version" -> messages.send(sender, "plugin.version",
-                    "version", plugin.getPluginMeta().getVersion());
+            case "version" -> version(sender);
             case "join", "sit" -> join(sender);
             case "leave", "stand" -> leave(sender);
             case "ready" -> ready(sender);
@@ -123,6 +125,14 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
     }
 
     // ------------------------------------------------------------------ public
+
+    /** The version, and for an admin whether it is the newest one on Modrinth. */
+    private void version(CommandSender sender) {
+        messages.send(sender, "plugin.version", "version", plugin.getPluginMeta().getVersion());
+        if (sender.hasPermission("uno.admin")) {
+            updates.tell(sender);
+        }
+    }
 
     private void help(CommandSender sender) {
         messages.send(sender, "plugin.help-header");
@@ -277,10 +287,23 @@ public final class UnoCommand implements CommandExecutor, TabCompleter {
         if (notAdmin(sender)) {
             return;
         }
-        settings.reload();
-        messages.reload();
-        tables.reloadThemes();
-        messages.send(sender, "plugin.reloaded");
+        // A file with a mistake in it is reported and left alone; the server keeps running on
+        // what that file said the last time it loaded, never on a silent reset to defaults.
+        String configError = settings.reload();
+        String messagesError = messages.reload();
+        String themesError = tables.reloadThemes();
+        boolean clean = true;
+        for (String[] failed : new String[][]{
+                {"config.yml", configError}, {"messages.yml", messagesError},
+                {"themes.yml", themesError}}) {
+            if (failed[1] != null) {
+                clean = false;
+                messages.send(sender, "plugin.reload-failed", "file", failed[0], "error", failed[1]);
+            }
+        }
+        if (clean) {
+            messages.send(sender, "plugin.reloaded");
+        }
     }
 
     /**

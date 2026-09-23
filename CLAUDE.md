@@ -43,10 +43,20 @@ export PATH="$JAVA_HOME/bin:$HOME/scoop/apps/maven/current/bin:$PATH"
 ```
 
 ```bash
-mvn clean package          # -> target/uno-1.0.jar   (paper-api is `provided`, not bundled)
-mvn test                   # rules-layer tests only
+mvn clean package          # -> target/uno-<version>.jar   (paper-api is `provided`, not bundled)
+mvn test                   # everything that can run without a server
 mvn -q -o clean package    # offline, quiet
 ```
+
+**`<version>` in `pom.xml` is the plugin's only version number.** `plugin.yml` is filtered from it
+at build time (only that file — `messages.yml` is full of `<tags>` and must never be filtered), the
+jar is named after it, and the update checker compares it with Modrinth. `UpdateCheckerTest`
+fails the build if `plugin.yml` ever ships with a literal `${project.version}`.
+
+Tests that write files use `@TempDir(cleanup = NEVER)` plus `TestFiles.deletePatiently`. JUnit's
+own cleanup failed about half the builds on Windows: Defender scans a just-written file, the file
+sits "delete pending" for a few milliseconds, and the folder isn't empty yet. That was measured
+(the delete always succeeds a moment later, with no handle of ours open), not guessed.
 
 `Card`, `Deck` and `UnoGame` are pure Java (no Bukkit imports) and covered by JUnit in
 `src/test/java`. The load-bearing test is `totalCards()`: **a game always holds exactly 108 cards**,
@@ -67,9 +77,12 @@ The plugin does **not** host the pack. It will *offer* one if `resource-pack.url
 you host yourself (`ResourcePackSender`); otherwise the zip is installed client-side by hand.
 
 **Every key in `config.yml` is read**, all of it through `util/Settings` — that class is the only
-place in the plugin that touches `getConfig()`, so "is this key wired up?" is answerable by reading
-one file. If you add a key, add it there too; if you delete code, delete the key. `/uno reload`
-re-reads both `config.yml` and `messages.yml`.
+place in the plugin that reads config, so "is this key wired up?" is answerable by reading one
+file. If you add a key, add it there too; if you delete code, delete the key. `SettingsTest`
+enforces both directions: a key the jar's config.yml ships that `Settings.apply` never reads, or a
+key it reads that config.yml doesn't ship, fails the build. **`Settings.apply` passes no defaults
+of its own** — the jar's config.yml is registered as the defaults, so that file is the one place a
+default lives. `/uno reload` re-reads `config.yml`, `messages.yml` and `themes.yml`.
 
 Every sound and particle goes through `util/Fx` the same way, so "what does this plugin sound
 like?" is one file rather than a grep for `playSound`. Call sites name the *event*
@@ -79,16 +92,87 @@ scales with the number of players at the table — and `effects.sounds` / `effec
 
 Player-facing strings all live in `src/main/resources/messages.yml` and go through `util/Messages`
 (MiniMessage). There are **no `§` codes and no `sendMessage(String)` calls** left in the source —
-keep it that way. The jar's copy of `messages.yml` is registered as the defaults, so an admin's file
-only needs the keys they changed. Placeholder values are inserted unparsed, so a player named
-`<red>oops` can't inject formatting into a broadcast.
+keep it that way. The jar's copy of `messages.yml` is registered as the defaults. Placeholder
+values are inserted unparsed, so a player named `<red>oops` can't inject formatting into a
+broadcast.
 
-**Changing what a message is given is a breaking change for every server with an older copy**,
-because the admin's line wins over the jar's. `Messages.staleKeys` catches it on load: an admin
+**Changing what a message is given is a breaking change for every server that edited that
+line**, because an admin's edit wins over the jar's. (A line they *never* edited follows the
+jar's rewording by itself — see "Config files across updates".) `Messages.staleKeys` catches it on load: an admin
 line using a placeholder the shipped line doesn't (MiniMessage's own tags aside) is replaced by
 the shipped text in memory, with one warning naming the keys. That is what `bet.ride-won`
 printing a literal `<items>` looked like. When a placeholder *keeps its name but changes
 meaning*, rename the key instead — the check can't see that.
+
+### Config files across updates
+
+`config.yml` and `messages.yml` load through `util/ShippedYaml`, which keeps a server's copy
+current as the plugin updates. Written once on first run, an admin's file used to be frozen: a
+new setting never appeared in it, and a reworded message never reached any server, because every
+line in the file counted as the admin's choice whether they had touched it or not. What it does
+on every load, and what that means when you change these files:
+
+- **Adding a key needs nothing but the key** (plus `Settings.apply` for config). It is merged
+  into every server's file with its comments, in the place the jar has it.
+- **A config value already in a server's file is never changed** — not even when the default
+  moves. Upgrading must not silently change how a server plays.
+- **A message line the admin never edited follows the new wording; one they edited is kept.**
+  "Never edited" is known because each load records the jar's copy in
+  `plugins/UNO/.state/<file>.shipped`, and the next jar compares against it (a three-way merge).
+  Comments follow the same rule in both files. With no record (a pre-launch server, or the record
+  deleted) every line counts as edited — it degrades to keeping, never to overwriting.
+- **Renaming a key, or changing what its value means, needs a `Migration`** in
+  `Settings.MIGRATIONS` / `Messages.MIGRATIONS` *and* `config-version` / `messages-version` bumped
+  in the jar's file. Without one the admin's value is stranded under the old name (reported as
+  unused) and the new key arrives at its default. Migrations run on the recorded jar copy too, so
+  a renamed message the admin never touched still counts as untouched. `SettingsTest` /
+  `MessagesTest` fail if a version and its migrations disagree.
+- **Keys the jar dropped** go if the admin never edited them, and stay with a startup warning
+  naming them if they did. A mistyped value (`timeout: sixty`) stays in the file, is warned about,
+  and reads as the default.
+- **A file that doesn't parse is never written.** The server runs on `.state/<file>.last-good`
+  (what the file said the last time it loaded) rather than silently resetting a gambling server
+  to defaults, and `/uno reload` replies with the line and column. A file from a *newer* jar (a
+  downgrade) is used as-is and not rewritten. A file that isn't UTF-8 is upgraded in memory but
+  never rewritten, since writing it back would mangle it.
+- It writes only when something actually changed, backs the old copy up to
+  `plugins/UNO/backups/`, and writes through a temp file. `ShippedYamlTest` pins all of this,
+  against the real bundled files too: loading an up-to-date file again must not touch it, or every
+  restart would leave a backup behind.
+
+`themes.yml` is plugin-written data rather than a shipped file, so it has its own version of this.
+The file records the built-ins it has been given (`built-ins-offered`), and a built-in added in a
+later release is added to it once — so a built-in someone deleted stays deleted, and an admin's
+own theme that shares a new built-in's id is never replaced. New entries go into the file as it
+was read, not through a rewrite from memory, so an entry that failed to load survives. While
+themes.yml doesn't parse, nothing is saved over it, `/uno reload` keeps the themes it had, and
+`repairIfNeeded` stands down — otherwise every custom-themed table would resolve to a stand-in and
+be rebuilt out of the wrong blocks.
+
+### Update checker, and releasing
+
+`util/UpdateChecker` asks Modrinth (`api.modrinth.com/v2/project/legallynotuno/version`) whether a
+newer release is out: once at startup (console), and when an `uno.admin` player joins or runs
+`/uno version` (chat, with a Download button to `modrinth.com/project/legallynotuno`). It asks
+Modrinth rather than GitHub because the repo is private — a server can't read it and no token can
+ship in a jar — and because Modrinth is where the download is. `update-checker.enabled` turns it
+off.
+
+- Only `release` versions that are `listed` and built for a Paper-family loader count, and the
+  highest by version order wins (`1.10` beats `1.9`; `1.1-beta.2` loses to `1.1`). Betas and
+  other-platform builds are never offered.
+- The HTTP call is async and its answer comes back to the main thread through the scheduler. An
+  answer under a minute old is reused, so a restart that brings every admin back is one request.
+  A failed check says nothing in chat and tells the console once per distinct failure; after a
+  failure admins keep getting the last answer that did arrive.
+- Until the Modrinth project is public, every startup logs one "HTTP 404" warning. That is
+  expected, not a bug.
+
+**To release:** bump `<version>` in `pom.xml`, `mvn clean package`, and publish
+`target/uno-<version>.jar` on Modrinth with **exactly that string as the version number** and
+version type *release*. That is the whole release step. The checker compares that field with the
+running `plugin.yml`'s version, so keep them identical: a suffix changes the order (`1.1-paper`
+reads as a pre-release, older than `1.1`).
 
 ## Regenerating pack assets
 
@@ -193,6 +277,7 @@ TableManager ──────────────► GameManager ───
       └── BusyCheck: "is a hand or a pot running at this table?" ──┘
 
 util/  Settings (all config)  Messages (all text)  Fx (all sound + particles)
+       ShippedYaml (config/messages across updates)  UpdateChecker (Modrinth)
        NameCache (UUID→name, never blocks)
 command/  UnoCommand (routing + permissions + tab completion), GambleCommand
 ```

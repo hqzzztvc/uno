@@ -146,9 +146,13 @@ public class TableManager implements Listener {
         return customBlocks;
     }
 
-    /** Re-read themes.yml — {@code /uno reload} does this alongside config and messages. */
-    public void reloadThemes() {
-        themes.load();
+    /**
+     * Re-read themes.yml — {@code /uno reload} does this alongside config and messages.
+     *
+     * @return null, or why themes.yml can't be used
+     */
+    public String reloadThemes() {
+        return themes.load();
     }
 
     /** Wire in "is anything using this table right now?" (games and pots). */
@@ -327,7 +331,9 @@ public class TableManager implements Listener {
      */
     private boolean repairIfNeeded(UnoTable table) {
         World w = table.anchor().getWorld();
-        if (w == null) {
+        if (w == null || themes.unreadable()) {
+            // With themes.yml broken, every custom-themed table resolves to a stand-in, and
+            // "repairing" it would lay the stand-in's blocks over the real table.
             return false;
         }
         TableTheme theme = themeOf(table);

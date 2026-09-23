@@ -252,7 +252,10 @@ public final class ThemeEditor implements Listener {
             seats[i] = spec;
         }
 
-        themes.put(new TableTheme(session.themeId, session.displayName, grid, seats, false));
+        if (!themes.put(new TableTheme(session.themeId, session.displayName, grid, seats, false))) {
+            messages.send(player, "theme.file-broken");
+            return;
+        }
         session.saved = true;
         messages.send(player, "theme.saved", "theme", session.themeId);
         player.closeInventory();

@@ -3,7 +3,7 @@ package com.unoplugin.util;
 import com.unoplugin.game.RuleSet;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.minimessage.MiniMessage;
-import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.BlockStateMeta;
 import org.bukkit.inventory.meta.BundleMeta;
@@ -21,10 +21,13 @@ import java.util.Set;
  *
  * <p>One place that reads the file, so "is this key actually wired up?" is answerable by
  * reading a single class. Everything here is re-read by {@link #reload()} on /uno reload.
+ *
+ * <p>The file itself is loaded through {@link ShippedYaml}, which adds the keys a new version
+ * ships to a server's existing config.yml and never changes a value already in it.
  */
 public final class Settings {
 
-    private final Plugin plugin;
+    private final ShippedYaml file;
 
     // gameplay
     private int startingHandSize;
@@ -58,6 +61,9 @@ public final class Settings {
     private boolean particles;
     private float effectVolume;
 
+    // updates
+    private boolean updateChecks;
+
     // misc
     private boolean debug;
     private String packLink;
@@ -65,18 +71,48 @@ public final class Settings {
     private boolean packRequired;
     private String packPrompt;
 
+    /**
+     * Every rename or change of meaning config.yml has had, oldest first — see
+     * {@link ShippedYaml.Migration}. Adding a key needs nothing here (it is merged in on its
+     * own); renaming one, or changing what its value means, needs a step here AND
+     * {@code config-version} in config.yml bumped to match, or servers keep the old name with
+     * nothing reading it and their setting silently reverts to the default.
+     */
+    static final List<ShippedYaml.Migration> MIGRATIONS = List.of();
+
     public Settings(Plugin plugin) {
-        this.plugin = plugin;
+        this.file = new ShippedYaml(plugin, "config.yml", "config-version", false, MIGRATIONS);
         reload();
     }
 
-    public void reload() {
-        plugin.reloadConfig();
-        FileConfiguration c = plugin.getConfig();
+    /** For tests: read an already-loaded config, with no file behind it. */
+    Settings(ConfigurationSection config) {
+        this.file = null;
+        apply(config);
+    }
 
-        startingHandSize = clamp(c.getInt("game.starting-hand-size", 7), 1, 20);
-        turnTimeoutSeconds = Math.max(0, c.getInt("game.turn-timeout-seconds", 60));
-        turnWarningSeconds = Math.max(0, c.getInt("game.turn-warning-seconds", 10));
+    /**
+     * Re-read config.yml, upgrading it first if this jar ships settings it doesn't have yet.
+     *
+     * @return null, or why config.yml can't be used — in which case the settings it last loaded
+     *         with stay in force, rather than the server quietly falling back to defaults.
+     */
+    public String reload() {
+        ShippedYaml.Loaded loaded = file.load();
+        apply(loaded.config());
+        return loaded.error();
+    }
+
+    /**
+     * Every read here passes no default of its own: the jar's config.yml is registered as the
+     * defaults, so a missing or mistyped value falls back to what that file documents, and
+     * there is no second copy of every default to drift away from it. {@code SettingsTest}
+     * holds this method and config.yml to each other in both directions.
+     */
+    void apply(ConfigurationSection c) {
+        startingHandSize = clamp(c.getInt("game.starting-hand-size"), 1, 20);
+        turnTimeoutSeconds = Math.max(0, c.getInt("game.turn-timeout-seconds"));
+        turnWarningSeconds = Math.max(0, c.getInt("game.turn-warning-seconds"));
         if (turnWarningSeconds >= turnTimeoutSeconds) {
             turnWarningSeconds = 0; // a warning at or after the deadline is no warning at all
         }
@@ -84,59 +120,61 @@ public final class Settings {
         // Every house rule is off unless a server turns it on: an upgrade must not silently
         // change the game people are already playing.
         rules = new RuleSet(
-                c.getBoolean("rules.stacking.enabled", false),
-                c.getBoolean("rules.stacking.draw4-on-draw2", true),
-                c.getBoolean("rules.stacking.draw2-on-draw4", false),
-                c.getBoolean("rules.multi-play.enabled", false),
-                Math.max(0, c.getInt("rules.multi-play.max-cards", 0)),
-                c.getBoolean("rules.jump-in", false),
-                c.getBoolean("rules.seven-o", false),
-                c.getBoolean("rules.draw-to-match", false),
-                c.getBoolean("rules.challenge-draw4", false),
-                c.getBoolean("rules.uno-callout.enabled", false),
-                Math.max(1, c.getInt("rules.uno-callout.window-seconds", 5)),
-                Math.max(0, c.getInt("rules.uno-callout.penalty", 2)),
-                Math.max(0, c.getInt("rules.uno-callout.false-callout-penalty", 2)));
+                c.getBoolean("rules.stacking.enabled"),
+                c.getBoolean("rules.stacking.draw4-on-draw2"),
+                c.getBoolean("rules.stacking.draw2-on-draw4"),
+                c.getBoolean("rules.multi-play.enabled"),
+                Math.max(0, c.getInt("rules.multi-play.max-cards")),
+                c.getBoolean("rules.jump-in"),
+                c.getBoolean("rules.seven-o"),
+                c.getBoolean("rules.draw-to-match"),
+                c.getBoolean("rules.challenge-draw4"),
+                c.getBoolean("rules.uno-callout.enabled"),
+                Math.max(1, c.getInt("rules.uno-callout.window-seconds")),
+                Math.max(0, c.getInt("rules.uno-callout.penalty")),
+                Math.max(0, c.getInt("rules.uno-callout.false-callout-penalty")));
 
-        maxTablesPerWorld = Math.max(0, c.getInt("tables.max-per-world", 0));
-        joinRadius = Math.max(1.0, c.getDouble("tables.join-radius", 4.0));
+        maxTablesPerWorld = Math.max(0, c.getInt("tables.max-per-world"));
+        joinRadius = Math.max(1.0, c.getDouble("tables.join-radius"));
         // One pair for every table. The per-variant keys these replaced only existed because
         // the four variants were Java constants; a theme is data now and there can be any
         // number of them, so a seat count keyed by theme would be a config section nobody
         // could keep in step with themes.yml.
-        tableMinPlayers = clamp(c.getInt("tables.min-players", 2), 2, 4);
-        tableMaxPlayers = clamp(c.getInt("tables.max-players", 4), tableMinPlayers, 4);
+        tableMinPlayers = clamp(c.getInt("tables.min-players"), 2, 4);
+        tableMaxPlayers = clamp(c.getInt("tables.max-players"), tableMinPlayers, 4);
 
-        gamblingEnabled = c.getBoolean("gambling.enabled", true);
-        anteSeconds = Math.max(0, c.getInt("gambling.ante-seconds", 300));
-        auditLog = c.getBoolean("gambling.audit-log", true);
-        maxPotItems = Math.max(0, c.getInt("gambling.limits.max-pot-items", 0));
-        minAnteItems = Math.max(0, c.getInt("gambling.limits.min-ante-items", 1));
-        blockContainers = c.getBoolean("gambling.limits.block-containers", true);
+        gamblingEnabled = c.getBoolean("gambling.enabled");
+        anteSeconds = Math.max(0, c.getInt("gambling.ante-seconds"));
+        auditLog = c.getBoolean("gambling.audit-log");
+        maxPotItems = Math.max(0, c.getInt("gambling.limits.max-pot-items"));
+        minAnteItems = Math.max(0, c.getInt("gambling.limits.min-ante-items"));
+        blockContainers = c.getBoolean("gambling.limits.block-containers");
         List<String> raw = c.getStringList("gambling.limits.blacklist");
         List<String> upper = new ArrayList<>(raw.size());
         for (String s : raw) {
             upper.add(s.trim().toUpperCase(Locale.ROOT));
         }
         blacklist = List.copyOf(upper);
-        moneyEnabled = c.getBoolean("gambling.money.enabled", true);
-        minAnteMoney = Math.max(0.0, c.getDouble("gambling.money.min-ante", 1.0));
-        maxPotMoney = Math.max(0.0, c.getDouble("gambling.money.max-pot", 0.0));
+        moneyEnabled = c.getBoolean("gambling.money.enabled");
+        minAnteMoney = Math.max(0.0, c.getDouble("gambling.money.min-ante"));
+        maxPotMoney = Math.max(0.0, c.getDouble("gambling.money.max-pot"));
 
-        rideEnabled = c.getBoolean("gambling.ride.enabled", true);
-        rideWindowSeconds = Math.max(1, c.getInt("gambling.ride.window-seconds", 20));
-        rideChallengeSeconds = Math.max(1, c.getInt("gambling.ride.challenge-seconds", 90));
+        rideEnabled = c.getBoolean("gambling.ride.enabled");
+        rideWindowSeconds = Math.max(1, c.getInt("gambling.ride.window-seconds"));
+        rideChallengeSeconds = Math.max(1, c.getInt("gambling.ride.challenge-seconds"));
 
-        sounds = c.getBoolean("effects.sounds", true);
-        particles = c.getBoolean("effects.particles", true);
+        sounds = c.getBoolean("effects.sounds");
+        particles = c.getBoolean("effects.particles");
         // Above 2 is just distortion, and 0 is what `sounds: false` is for.
-        effectVolume = (float) Math.max(0.0, Math.min(2.0, c.getDouble("effects.volume", 1.0)));
+        effectVolume = (float) Math.max(0.0, Math.min(2.0, c.getDouble("effects.volume")));
 
-        debug = c.getBoolean("debug", false);
-        packLink = c.getString("resource-pack.url.link", "");
-        packSha1 = c.getString("resource-pack.url.sha1", "");
-        packRequired = c.getBoolean("resource-pack.require", false);
-        packPrompt = c.getString("resource-pack.prompt", "");
+        updateChecks = c.getBoolean("update-checker.enabled");
+
+        debug = c.getBoolean("debug");
+        packLink = c.getString("resource-pack.url.link");
+        packSha1 = c.getString("resource-pack.url.sha1");
+        packRequired = c.getBoolean("resource-pack.require");
+        packPrompt = c.getString("resource-pack.prompt");
     }
 
     private static int clamp(int value, int min, int max) {
@@ -291,6 +329,13 @@ public final class Settings {
     /** Multiplier applied to every sound the plugin plays (0 = silent, 1 = as tuned). */
     public float effectVolume() {
         return effectVolume;
+    }
+
+    // ----------------------------------------------------------------- updates
+
+    /** Whether to ask Modrinth for a newer release and tell admins about it. */
+    public boolean updateChecks() {
+        return updateChecks;
     }
 
     // -------------------------------------------------------------------- misc

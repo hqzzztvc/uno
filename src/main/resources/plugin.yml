@@ -1,11 +1,14 @@
 name: UNO
-version: 1.0
+# Filled in from <version> in pom.xml at build time, so there is exactly one place to bump.
+# The update checker compares it with the newest version number on Modrinth.
+version: '${project.version}'
 main: com.unoplugin.UnoPlugin
 # Matches the paper-api the plugin is built against (see pom.xml). Declaring an older
 # version makes Paper apply legacy-material compatibility we neither need nor want.
 api-version: '26.2'
 description: A fully playable multiplayer UNO card game with placeable tables and immersive controls.
 author: ankur
+website: https://modrinth.com/project/legallynotuno
 folia-supported: false
 
 # All read reflectively, so the plugin builds and runs identically with none of them
