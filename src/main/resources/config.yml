@@ -1,5 +1,5 @@
 # ============================================================
-#  UNO Plugin Configuration
+#  Legally Not Uno — configuration
 # ============================================================
 #
 #  Every key in this file is read by the plugin. If you change something here and
@@ -32,7 +32,7 @@ resource-pack:
   require: false
 
   # Prompt shown with the download request (MiniMessage formatting).
-  prompt: "<yellow>UNO needs this resource pack for the card textures. Please accept!"
+  prompt: "<yellow>Legally Not Uno needs this resource pack for the card textures. Please accept!"
 
 # ---- Gameplay ----
 game:
@@ -50,7 +50,7 @@ game:
 
 # ---- House rules ----
 #
-#  UNO has no single agreed rulebook -- almost every table plays some variant, and the
+#  The game has no single agreed rulebook -- almost every table plays some variant, and the
 #  popular ones change the game enough that they cannot all be on at once. So they are
 #  toggles, and EVERY ONE IS OFF BY DEFAULT: upgrading the plugin never changes the game
 #  your players are already used to.
@@ -121,7 +121,7 @@ rules:
 #  Every table has four stairs, so max-players cannot go above 4.
 #
 #  Which blocks a table is made of is NOT set here. Each look is a "theme" in
-#  plugins/UNO/themes.yml: a 3x3 grid plus a block for each of the four seats, so a
+#  plugins/LegallyNotUno/themes.yml: a 3x3 grid plus a block for each of the four seats, so a
 #  server can design its own without a plugin rebuild. Build one in game with
 #  /uno theme create <id>, or write it by hand -- that file documents its own format.
 tables:
@@ -140,7 +140,7 @@ tables:
 #
 #  Players stake items by dropping them onto the table, or currency with /gamble <amount>;
 #  the winner of the hand takes the whole pot. Everything staked is held in
-#  plugins/UNO/escrow/, so a crash or restart returns it to whoever put it in.
+#  plugins/LegallyNotUno/escrow/, so a crash or restart returns it to whoever put it in.
 gambling:
   enabled: true
 
@@ -148,7 +148,7 @@ gambling:
   # 0 disables the timeout (a stalled bet then holds items until someone cancels).
   ante-seconds: 300
 
-  # Append every stake, payout, refund and forfeit to plugins/UNO/bets.log.
+  # Append every stake, payout, refund and forfeit to plugins/LegallyNotUno/bets.log.
   # Leave this on: it is the only record you will have when someone claims theft.
   audit-log: true
 
@@ -217,8 +217,8 @@ effects:
 
 # ---- Updates ----
 #
-#  When the server starts, and whenever someone with uno.admin joins or runs
-#  /uno version, UNO asks Modrinth whether a newer release is out and tells them in
+#  When the server starts, and whenever someone with legallynotuno.admin joins or runs
+#  /uno version, Legally Not Uno asks Modrinth whether a newer release is out and tells them in
 #  chat, with a link to download it. It only reads the public list of versions --
 #  nothing is downloaded or installed for you.
 update-checker:
@@ -231,5 +231,5 @@ update-checker:
 #  and are not meant for a live server.
 debug: false
 
-# Which layout this file is in. UNO updates it when it updates the file -- leave it be.
+# Which layout this file is in. Legally Not Uno updates it when it updates the file -- leave it be.
 config-version: 1

@@ -1,5 +1,5 @@
 # ============================================================
-#  UNO — player-facing text
+#  Legally Not Uno — player-facing text
 # ============================================================
 #
 #  Every string the plugin shows a player lives here. Reword, restyle or translate
@@ -17,7 +17,7 @@
 #  backups/. A key missing from the file falls back to the version inside the jar.
 
 # Prepended wherever a message uses <prefix>.
-prefix: "<gold><bold>UNO</bold></gold> <dark_gray>|</dark_gray> "
+prefix: "<gold><bold>Legally Not Uno</bold></gold> <dark_gray>|</dark_gray> "
 
 common:
   no-permission: "<red>You don't have permission."
@@ -27,10 +27,10 @@ common:
   number-expected: "<red>'<value>' isn't a number."
 
 plugin:
-  header: "<gold>UNO <gray>v<version> <dark_gray>| <gray>/uno help"
-  version: "<gold>UNO <gray>v<version>"
-  reloaded: "<green>UNO config and messages reloaded."
-  help-header: "<gold><bold>UNO</bold> <dark_gray>— commands"
+  header: "<gold>Legally Not Uno <gray>v<version> <dark_gray>| <gray>/uno help"
+  version: "<gold>Legally Not Uno <gray>v<version>"
+  reloaded: "<green>Reloaded config.yml, messages.yml and themes.yml."
+  help-header: "<gold><bold>Legally Not Uno</bold> <dark_gray>— commands"
   help-join: "<yellow>/uno join <gray>— sit at the table you're standing next to"
   help-ready: "<yellow>/uno ready <gray>— you're in; the hand deals when everyone is"
   help-bet: "<yellow>/uno bet [amount] <gray>— play this one for stakes instead"
@@ -51,10 +51,10 @@ plugin:
   help-tp: "<yellow>/uno tp <id> <gray>— teleport to a table"
   help-end: "<yellow>/uno end <player|all> <gray>— force a hand to finish"
   help-refund: "<yellow>/uno refund <player|all> <gray>— settle a stuck pot back to its stakers"
-  help-reload: "<yellow>/uno reload <gray>— re-read config.yml and messages.yml"
+  help-reload: "<yellow>/uno reload <gray>— re-read config.yml, messages.yml and themes.yml"
   # <file> is config.yml, messages.yml or themes.yml; <error> is what's wrong and where.
   reload-failed: "<red>Couldn't reload <file>: <gray><error>. <red>It's unchanged, and what it said before is still in use."
-  # Told to admins (uno.admin) as they join and in /uno version, after asking Modrinth.
+  # Told to admins (legallynotuno.admin) as they join and in /uno version, after asking Modrinth.
   # <latest> and <current> are version numbers; <download> is the button below, which
   # opens the plugin's Modrinth page. Blank a line to stop it being sent.
   update-available: "<gold>Legally Not Uno <white><latest></white> is out <gray>(you're on <current>) <download>"
@@ -64,7 +64,7 @@ plugin:
 table:
   # Shown the moment a player sits down, and again when a hand finishes. <ready> and <bet>
   # are the two buttons below — the "-casual" variants are used where this server has
-  # gambling switched off, or the player lacks uno.gamble.
+  # gambling switched off, or the player lacks legallynotuno.gamble.
   choose: "<gray>How are we playing? <ready> <dark_gray>·<gray> <bet>"
   choose-casual: "<gray>Ready when you are: <ready>"
   again: "<gray>Another hand? <ready> <dark_gray>·<gray> <bet>"
@@ -77,9 +77,9 @@ table:
   unknown-type: "<red>No such table. <gray>Pick one of: <yellow><variants>"
   placed: "<green><variant> built. <gray>Walk up to it and type <yellow>/uno join<gray> to sit."
   no-room: "<red>No room there — aim at open, level ground with 2 blocks clear all round."
-  protected: "<red>That block is part of a UNO table. <gray>Use <yellow>/uno remove<gray> to take it down."
+  protected: "<red>That block is part of a card table. <gray>Use <yellow>/uno remove<gray> to take it down."
   too-close: "<red>Too close to another table — give it more room."
-  world-limit: "<red>This world already has its limit of <limit> UNO table(s)."
+  world-limit: "<red>This world already has its limit of <limit> table(s)."
   removed: "<green>Removed the nearest table."
   none-near: "<red>No table within <radius> blocks. <gray>Walk up to one and try again."
   busy: "<red>That table is in use — finish the hand (or <yellow>/uno end<red>) before removing it."
@@ -90,7 +90,7 @@ table:
   not-seated: "<gray>You aren't sitting at a table."
   leave: "<gray>You leave the table."
   stand-forfeit: "<red>You stood up, so you're out of the hand. <gray>Sit back down and deal again when you're ready."
-  list-header: "<gold><bold>UNO tables</bold> <dark_gray>— <count> placed"
+  list-header: "<gold><bold>Tables</bold> <dark_gray>— <count> placed"
   list-entry: "<dark_gray> · <yellow><id> <gray><world> <white><x>, <y>, <z> <dark_gray>[<gray><seated>/<seats> seated<dark_gray>]"
   list-empty: "<gray>No tables yet. <yellow>/uno give <theme><gray> to get one to place."
   not-found: "<red>No table with id starting <yellow><id><red>."
@@ -112,7 +112,7 @@ theme:
   file-broken: "<red>themes.yml has a mistake in it, so nothing can be saved to it. <gray>Fix it, run <yellow>/uno reload<gray>, then save again."
 
 game:
-  started: "<gold><bold>UNO</bold> <gray>started — <count> players. Good luck!"
+  started: "<gold><bold>Game on</bold> <gray>— <count> players. Good luck!"
   controls: "<gray>A/D or wheel = pick · <green>left-click/Q = play <gray>· <yellow>right-click/F = draw"
   already-in-game: "<yellow>You're already in a game. Finish it first."
   other-in-game: "<red><player> is already in a game."
@@ -153,7 +153,7 @@ game:
   uno: "<gold><bold><player> has UNO!</bold> <gray>One card left."
   uno-title: "<gold><bold>UNO!"
   uno-subtitle: "<gray>One card left"
-  start-title: "<gold><bold>UNO"
+  start-title: "<gold><bold>Legally Not Uno"
   start-subtitle: "<gray><count> players — good luck"
   win-title: "<gold><bold><player> wins!"
   win-subtitle: "<gray>Hand over"
@@ -163,7 +163,7 @@ game:
   not-in-game: "<gray>You aren't in a hand right now."
   stopped: "<green>Hand ended."
   stop-wagered: "<red>There's a pot on this hand — <yellow>/uno stop<red> can't settle a wager. Use <yellow>/uno quit<red> to drop out (your stake stays in the pot)."
-  info-header: "<gold><bold>UNO</bold> <dark_gray>— <games> game(s), <bets> open pot(s)"
+  info-header: "<gold><bold>Legally Not Uno</bold> <dark_gray>— <games> game(s), <bets> open pot(s)"
   info-game: "<dark_gray> · <gray>hand at <yellow><table> <dark_gray>[<white><players><dark_gray>] turn: <aqua><turn>"
   info-bet: "<dark_gray> · <gray>pot at <yellow><table> <dark_gray>[<white><state><dark_gray>] <gold><items> <gray>item(s) from <white><stakers>"
   info-none: "<gray>Nothing running."
@@ -203,7 +203,7 @@ hand:
 
 bet:
   disabled: "<red>Gambling is disabled on this server."
-  help-header: "<gold><bold>LET IT RIDE</bold> <dark_gray>— <gray>wager items on a hand of UNO"
+  help-header: "<gold><bold>LET IT RIDE</bold> <dark_gray>— <gray>wager items or money on a hand"
   help-open: "<yellow>/gamble <gray>— open (or join) the ante at your table"
   help-stake: "<gray>  then <white>drop items onto the table <gray>to stake them"
   help-money: "<yellow>/gamble <amount> <gray>— stake cash too; items and money go in the same pot"
@@ -248,7 +248,7 @@ bet:
   not-enough: "<yellow>Not enough ready players to start."
   cancelled: "<red><player> called the bet off — everything goes back."
   bots-set: "<gray>Test bots at this table: <yellow><count><gray>. They don't stake — if a bot wins, the pot is a push and everyone is refunded."
-  plugin-item: "<red>That's UNO equipment — you can't put it in the pot."
+  plugin-item: "<red>That's part of the game — you can't put it in the pot."
   locked-in: "<yellow>You've already locked your stake in. <gray>/gamble out <yellow>to take it back first."
   container-blocked: "<red>You can't stake something with items inside it."
   blacklisted: "<red><item> can't be staked on this server."
@@ -307,5 +307,5 @@ escrow:
   returned-money: "<prefix><gray>returned <gold><money> <gray>held from an unfinished bet."
   inventory-full: "<gray>Your inventory was full — the rest dropped at your feet."
 
-# Which layout this file is in. UNO updates it when it updates the file -- leave it be.
+# Which layout this file is in. Legally Not Uno updates it when it updates the file -- leave it be.
 messages-version: 1

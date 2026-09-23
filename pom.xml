@@ -4,13 +4,13 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.unoplugin</groupId>
-    <artifactId>uno</artifactId>
+    <groupId>com.legallynotuno</groupId>
+    <artifactId>legallynotuno</artifactId>
     <version>1.0</version>
     <packaging>jar</packaging>
 
-    <name>UNO</name>
-    <description>A fully playable multiplayer UNO card game for Paper 26.2</description>
+    <name>Legally Not Uno</name>
+    <description>Legally Not Uno: a fully playable multiplayer card game for Paper 26.2</description>
 
     <properties>
         <java.version>25</java.version>

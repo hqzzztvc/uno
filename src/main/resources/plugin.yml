@@ -1,12 +1,12 @@
-name: UNO
+name: LegallyNotUno
 # Filled in from <version> in pom.xml at build time, so there is exactly one place to bump.
 # The update checker compares it with the newest version number on Modrinth.
 version: '${project.version}'
-main: com.unoplugin.UnoPlugin
+main: com.legallynotuno.LegallyNotUno
 # Matches the paper-api the plugin is built against (see pom.xml). Declaring an older
 # version makes Paper apply legacy-material compatibility we neither need nor want.
 api-version: '26.2'
-description: A fully playable multiplayer UNO card game with placeable tables and immersive controls.
+description: Legally Not Uno — a multiplayer card game with placeable tables, a hand of cards held in first person, and optional stakes.
 author: ankur
 website: https://modrinth.com/project/legallynotuno
 folia-supported: false
@@ -19,22 +19,22 @@ softdepend: [ItemsAdder, Oraxen, Nexo, Vault]
 
 commands:
   uno:
-    description: UNO game & table commands.
+    description: Legally Not Uno game and table commands.
     usage: /uno <help|join|ready|bet|start|give|theme>
-    permission: uno.play
+    permission: legallynotuno.play
   gamble:
-    description: Wager items or money on a hand of UNO — winner takes the pot.
+    description: Wager items or money on a hand — winner takes the pot.
     usage: /gamble [<amount>|ready|out|pot|go|cancel|ride|cash]
     aliases: [letitride, ante, bet]
-    permission: uno.gamble
+    permission: legallynotuno.gamble
 
 permissions:
-  uno.admin:
-    description: Access to UNO admin commands (tables, force-end, refunds, reload).
+  legallynotuno.admin:
+    description: Legally Not Uno admin commands (tables, themes, force-end, refunds, reload) and update notices.
     default: op
-  uno.play:
-    description: Allows a player to sit and play at UNO tables.
+  legallynotuno.play:
+    description: Allows a player to sit and play at the tables.
     default: true
-  uno.gamble:
-    description: Allows a player to stake items or money on a hand of UNO.
+  legallynotuno.gamble:
+    description: Allows a player to stake items or money on a hand.
     default: true

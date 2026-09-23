@@ -20,10 +20,25 @@ session that has been idle.
 
 ## What this is
 
-A Paper server plugin (`com.unoplugin`) that implements a fully playable multiplayer UNO game inside
-Minecraft: a placeable table with stair seats in nine themes (or any an admin builds), a card fan
-held in the player's hand, in-world draw/discard piles, and a wagering mode ("Let It Ride") that
-stakes items, Vault currency, or both.
+**Legally Not Uno** — a Paper server plugin (`com.legallynotuno`) that implements a fully playable
+multiplayer card game inside Minecraft: a placeable table with stair seats in nine themes (or any an
+admin builds), a card fan held in the player's hand, in-world draw/discard piles, and a wagering
+mode ("Let It Ride") that stakes items, Vault currency, or both.
+
+**Never call the plugin "UNO"** — not in chat, logs, item names, docs or build output. It is
+*Legally Not Uno* in prose, `LegallyNotUno` where a name can't have spaces (plugin.yml `name`, so
+the data folder is `plugins/LegallyNotUno/` and the log tag `[LegallyNotUno]`), and `legallynotuno`
+in lower case (artifact, jar, package, permissions `legallynotuno.*`). Text that means *the game*
+says "the game", "a hand" or "a table", not "UNO". Four things keep the old word **on purpose**,
+chosen when the plugin was renamed:
+
+- the `/uno` command — it names what players are playing, not the plugin;
+- the one-card call: "UNO!", **[ CALL UNO! ]**, `/uno uno`, `rules.uno-callout`;
+- the resource pack's `uno:` namespace — the pack is already published under it, and the IDs only
+  show in F3+H;
+- the class names `UnoGame`, `UnoTable` and `UnoCommand`, which model the game and that command.
+
+The trademark disclaimers in the READMEs name UNO because a disclaimer has to.
 
 Two halves that must stay in sync:
 
@@ -67,7 +82,9 @@ drifting. Add to those tests before touching the rules.
 There is no linter. Everything outside the rules layer needs a Paper 26.2 server to verify:
 
 ```bash
-cp target/uno-1.0.jar server/plugins/uno-1.0.jar
+cp target/legallynotuno-1.0.jar server/plugins/
+# Builds from before the rename were uno-*.jar with the data folder plugins/UNO/. Delete the old
+# jar (both would load and fight over /uno) and rename the folder to plugins/LegallyNotUno/.
 cd resourcepack && zip -qr "../Legally Not Uno Textures.zip" pack.mcmeta pack.png assets -x '*.DS_Store'
 # then copy "Legally Not Uno Textures.zip" into the *client's* resourcepacks folder and enable it
 # (the pack list titles a pack by its file or folder name; pack.png is the card back, squared)
@@ -118,7 +135,7 @@ on every load, and what that means when you change these files:
   moves. Upgrading must not silently change how a server plays.
 - **A message line the admin never edited follows the new wording; one they edited is kept.**
   "Never edited" is known because each load records the jar's copy in
-  `plugins/UNO/.state/<file>.shipped`, and the next jar compares against it (a three-way merge).
+  `plugins/LegallyNotUno/.state/<file>.shipped`, and the next jar compares against it (a three-way merge).
   Comments follow the same rule in both files. With no record (a pre-launch server, or the record
   deleted) every line counts as edited — it degrades to keeping, never to overwriting.
 - **Renaming a key, or changing what its value means, needs a `Migration`** in
@@ -136,7 +153,7 @@ on every load, and what that means when you change these files:
   downgrade) is used as-is and not rewritten. A file that isn't UTF-8 is upgraded in memory but
   never rewritten, since writing it back would mangle it.
 - It writes only when something actually changed, backs the old copy up to
-  `plugins/UNO/backups/`, and writes through a temp file. `ShippedYamlTest` pins all of this,
+  `plugins/LegallyNotUno/backups/`, and writes through a temp file. `ShippedYamlTest` pins all of this,
   against the real bundled files too: loading an up-to-date file again must not touch it, or every
   restart would leave a backup behind.
 
@@ -152,7 +169,7 @@ be rebuilt out of the wrong blocks.
 ### Update checker, and releasing
 
 `util/UpdateChecker` asks Modrinth (`api.modrinth.com/v2/project/legallynotuno/version`) whether a
-newer release is out: once at startup (console), and when an `uno.admin` player joins or runs
+newer release is out: once at startup (console), and when an `legallynotuno.admin` player joins or runs
 `/uno version` (chat, with a Download button to `modrinth.com/project/legallynotuno`). It asks
 Modrinth rather than GitHub because the repo is private — a server can't read it and no token can
 ship in a jar — and because Modrinth is where the download is. `update-checker.enabled` turns it
@@ -226,7 +243,7 @@ python3 generate_held_fan.py      # the ~6800-file uno:held composite fan (model
   without leaving the fan. Raising it is the fastest way to break first person again.
 - `generate_hand_model.sh` builds the static 7-card `uno:hand` item used only by the `/uno hand` debug
   command; it is not part of gameplay. All five `CardTester`/fan debug commands require both
-  `uno.admin` **and** `debug: true` in config.yml — they spawn per-tick display entities and have no
+  `legallynotuno.admin` **and** `debug: true` in config.yml — they spawn per-tick display entities and have no
   business on a live server.
 - **The pack holds nothing for "Let It Ride".** A logo model was briefly laid on wagered tables as
   a mat (`TableMat`, baked flat by a `generate_table_mat.py`); that was taken out before launch,
@@ -265,7 +282,7 @@ The held fan is a *single* PAPER item whose `custom_model_data` **strings** driv
 
 ## Architecture
 
-`UnoPlugin.onEnable` constructs the managers and wires them with setter injection, because the
+`LegallyNotUno.onEnable` constructs the managers and wires them with setter injection, because the
 dependencies are circular:
 
 ```
@@ -282,7 +299,7 @@ util/  Settings (all config)  Messages (all text)  Fx (all sound + particles)
 command/  UnoCommand (routing + permissions + tab completion), GambleCommand
 ```
 
-`BusyCheck` is why a table can't be removed out from under a running hand: `UnoPlugin` wires it to
+`BusyCheck` is why a table can't be removed out from under a running hand: `LegallyNotUno` wires it to
 `gameManager.hasGameAtTable(id) || betManager.hasSessionAtTable(id)`.
 
 **Every table plays both ways.** There is no casino table and no `UnoTable.Kind` any more — the
@@ -315,7 +332,7 @@ what happens next" below.
 
 ### House rules
 
-UNO has no single agreed rulebook, so the variants people actually play are toggles in
+The game has no single agreed rulebook, so the variants people actually play are toggles in
 `rules.*` (config.yml) collected into a `RuleSet` and handed to `UnoGame` at construction.
 **Every rule defaults to off** — upgrading must never silently change the game a server is
 already running. `RuleSet` is a plain record with no Bukkit in it, so a test constructs any
@@ -379,14 +396,14 @@ All visuals are `ItemDisplay` / `BlockDisplay` / `TextDisplay` entities spawned 
 the chunk; `TableManager` respawns them on `ChunkLoadEvent` and clears `entityIds` on unload. Only
 logical state is persisted:
 
-- `plugins/UNO/tables.yml` — table id, kind, theme id, world, x/y/z, yaw. A table whose world isn't loaded
+- `plugins/LegallyNotUno/tables.yml` — table id, kind, theme id, world, x/y/z, yaw. A table whose world isn't loaded
   when the plugin enables (the Multiverse case) is held in `TableManager.pending` and **written back
   verbatim on save**, then built if `WorldLoadEvent` brings its world up. Dropping it from the map
   instead means the next `save()` erases it from disk forever.
-- `plugins/UNO/escrow/<uuid>.yml` — staked items, one file per owner, so a stake costs one small
+- `plugins/LegallyNotUno/escrow/<uuid>.yml` — staked items, one file per owner, so a stake costs one small
   synchronous write rather than re-serialising everything the server holds. A legacy single-file
   `escrow.yml` is imported on first run and renamed to `escrow.yml.imported`.
-- `plugins/UNO/bets.log` — append-only audit trail (`BetLog`), written on a background thread and
+- `plugins/LegallyNotUno/bets.log` — append-only audit trail (`BetLog`), written on a background thread and
   drained on disable. Evidence, not state; escrow is the source of truth.
 
 The `cards_flat` / `deck_*` models come out of the generator *already lying flat and centred on
@@ -415,7 +432,7 @@ vanish every five plays is the bug that shape was hiding.
 
 A table's **looks are data, not code**. There is one shape — a 3×3 top with a stair pulled up to
 the middle of each side — and a `TableTheme` says which block goes in each of the nine cells and
-each of the four seats. `ThemeStore` loads them from `plugins/UNO/themes.yml`, which is also
+each of the four seats. `ThemeStore` loads them from `plugins/LegallyNotUno/themes.yml`, which is also
 written back by the in-game editor. The nine themes in `ThemeStore.builtIns()` are seeded into that
 file on first run and are **not special-cased anywhere** — they carry a `built-in` flag only so
 `/uno theme delete` refuses to leave a server with no themes.
@@ -501,7 +518,7 @@ already standing.
   off the back of the tag. The old `/uno give casual|casino <theme>` form is **not** accepted
   any more: there is no casino table, so a command that names one is refused rather than
   quietly building a table. `/uno createtable` is **gone**.
-- `onBlockBreak` protects a live table's 13 positions from everyone without `uno.admin`, since the
+- `onBlockBreak` protects a live table's 13 positions from everyone without `legallynotuno.admin`, since the
   blocks are now real and mineable. Admins are deliberately let through — which also means an admin
   testing will mine their own table and see it come back on the next restart.
 
@@ -597,7 +614,7 @@ Sitting still works by mounting an invisible `ArmorStand`, so `/uno leave` eject
 place whether the player typed the command or just pressed shift.
 
 **Standing up leaves the hand.** `leaveSeat` fires `TableManager.StandUpHook`, wired in
-`UnoPlugin` to `GameManager.forfeit`, so walking away costs exactly what `/uno quit` costs —
+`LegallyNotUno` to `GameManager.forfeit`, so walking away costs exactly what `/uno quit` costs —
 staked pot included, because it *is* that. The hook exists for the same reason `BusyCheck` does:
 tables are wired below games and must not know what a game is. Seat bookkeeping finishes before
 the hook fires, since the forfeit broadcasts to the table and can end the hand outright, and both

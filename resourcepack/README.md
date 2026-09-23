@@ -1,8 +1,8 @@
 # Legally Not Uno Textures
 
-**The cards for the Legally Not Uno plugin: a full multiplayer game of (legally not) UNO, played at a table inside Minecraft.**
+**The cards for the Legally Not Uno plugin: a full multiplayer card game, played at a table inside Minecraft.**
 
-This pack is the client-side half of the UNO plugin for Paper. The server runs the game, and this
+This pack is the client-side half of the Legally Not Uno plugin for Paper. The server runs the game, and this
 pack is what lets you see it: the cards in your hand, the pile you play onto and the deck you draw from.
 
 ---
@@ -27,7 +27,7 @@ pack is what lets you see it: the cards in your hand, the pile you play onto and
 | | |
 |---|---|
 | Minecraft | Java Edition **26.2** (pack format 88) |
-| Server | Must be running the UNO plugin |
+| Server | Must be running the Legally Not Uno plugin |
 | Replaces vanilla textures? | **No.** Everything in the pack is new, so it works alongside any other pack, in any order |
 | Mods | None needed |
 
@@ -48,7 +48,7 @@ The pack's icon in the list is the card back.
 ## For server owners
 
 The plugin doesn't host the pack, but it can offer it to players when they join. Upload the zip to
-any host that serves a direct download link, then fill in `plugins/UNO/config.yml`:
+any host that serves a direct download link, then fill in `plugins/LegallyNotUno/config.yml`:
 
 ```yaml
 resource-pack:
@@ -56,7 +56,7 @@ resource-pack:
     link: "https://example.com/legally-not-uno-textures.zip"
     sha1: "paste the zip's SHA-1 here"
   require: false   # true kicks players who decline the pack
-  prompt: "<yellow>UNO needs this resource pack for the card textures. Please accept!"
+  prompt: "<yellow>Legally Not Uno needs this resource pack for the card textures. Please accept!"
 ```
 
 Run `/uno reload`. Players who join after that are offered the pack.

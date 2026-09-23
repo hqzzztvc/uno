@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate a custom resource-pack FONT for rendering a player's UNO hand as a flat
+Generate a custom resource-pack FONT for rendering a player's hand as a flat
 2D fan on the HUD (no world entities -> no lag, no clipping).
 
 For every playable card we pre-render the card rotated about its BOTTOM-CENTRE pivot

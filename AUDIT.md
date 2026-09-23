@@ -1,6 +1,6 @@
 # Code Audit — resolved
 
-A full review of the UNO plugin at commit `187332f`: every Java file in `src/main/java`, the
+A full review of the plugin (then called UNO) at commit `187332f`: every Java file in `src/main/java`, the
 resource-pack generators, `plugin.yml` and `config.yml`. 33 findings.
 
 **All 33 are now fixed.** Each entry below keeps the original problem statement and records what
@@ -107,7 +107,7 @@ being handed to someone. `/uno refund <player|all>` settles a stuck pot back to 
 Seat mounts were never registered in `entityIds()`, the `seated` map kept pointing at a dead table id,
 and running pile/pot renderers kept floating in mid-air.
 
-**Fixed.** `TableManager.BusyCheck` — wired in `UnoPlugin` to
+**Fixed.** `TableManager.BusyCheck` — wired in `LegallyNotUno` (then `UnoPlugin`) to
 `hasGameAtTable(id) || hasSessionAtTable(id)` — refuses removal while a hand or pot is live. The seat
 `ArmorStand` is registered in `entityIds()` (and de-registered on `leaveSeat`), `remove()` stands
 everyone up first, and `despawnVisuals` ejects riders before removing entities. *Code only.*
@@ -191,7 +191,7 @@ always the visible one. *Code only.*
 
 Every stake re-serialised every item the server was holding for everyone.
 
-**Fixed.** One file per owner: `plugins/UNO/escrow/<uuid>.yml`. A stake touches one small file and
+**Fixed.** One file per owner: `plugins/LegallyNotUno/escrow/<uuid>.yml`. A stake touches one small file and
 the synchronous-durability guarantee is unchanged. A legacy `escrow.yml` is imported on first run and
 renamed to `escrow.yml.imported`. *Server verified* — seeded a legacy file, confirmed the per-owner
 file was written with the item intact and the old file renamed.
@@ -201,7 +201,7 @@ file was written with the item intact and the old file renamed.
 `CardTester` ran a 1-tick task per player teleporting seven or more display entities.
 
 **Fixed.** All five debug commands (`fan`, `fanclear`, `hand`, `testcards`, `cleartest`) require
-`uno.admin` **and** `debug: true`, and are hidden from tab completion otherwise. *Server verified* —
+`legallynotuno.admin` **and** `debug: true`, and are hidden from tab completion otherwise. *Server verified* —
 refused with `debug: false`, allowed after flipping it and running `/uno reload`.
 
 ### 19. The whole inventory is scanned on every selection change
@@ -246,13 +246,13 @@ code exists and every key defined is used. *Server verified* — reworded a mess
 ### 23. No tab completion
 
 **Fixed.** `UnoCommand` and `GambleCommand` implement `TabCompleter`. Admin subcommands are hidden
-from players without `uno.admin` and debug ones unless `debug: true`; second-argument completion
+from players without `legallynotuno.admin` and debug ones unless `debug: true`; second-argument completion
 covers table ids, player names and `all`. *Code only* — completion can't be driven from a console.
 
 ### 24. No audit log
 
 **Fixed.** `bet/BetLog` appends every stake, payout, refund, forfeit, deal, ride, cancel and shutdown
-to `plugins/UNO/bets.log` with a UTC timestamp, table id, player name **and** UUID, and the stacks
+to `plugins/LegallyNotUno/bets.log` with a UTC timestamp, table id, player name **and** UUID, and the stacks
 involved. Written on a single background thread and drained on disable — it is evidence, not state,
 so it must never cost a disk write mid-tick. Toggle with `gambling.audit-log`. *Code only.*
 
@@ -280,7 +280,7 @@ can be a shulker box of netherite. Every refusal cancels the drop. *Code only.*
 ### 28. `UnoPlugin.onCommand` is a 180-line switch
 
 **Fixed.** Split into `command/UnoCommand` and `command/GambleCommand`, one method per subcommand,
-with permission and debug gating factored into `notAdmin()` / `debugPlayer()`. `UnoPlugin` is now
+with permission and debug gating factored into `notAdmin()` / `debugPlayer()`. The main class (now `LegallyNotUno`) is
 just wiring. *Server verified.*
 
 ### 29. Two messaging APIs in use at once

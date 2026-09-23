@@ -1,6 +1,6 @@
 # Legally Not Uno
 
-A multiplayer card game of (legally not) UNO for Paper servers. You sit at a real table, hold your
+A multiplayer card game for Paper servers. You sit at a real table, hold your
 cards in a fan in first person, and play onto a pile that everyone at the table can see. Up to four
 players per table, with bots to fill empty seats if you're short.
 
@@ -19,7 +19,7 @@ players per table, with bots to fill empty seats if you're short.
 ## Installation
 
 1. Put the plugin jar in your server's `plugins/` folder.
-2. Start the server once so it creates `plugins/UNO/`.
+2. Start the server once so it creates `plugins/LegallyNotUno/`.
 3. Set up the resource pack (below).
 4. Give yourself a table with `/uno give lightcherry` and right-click the ground where you want it.
 
@@ -47,7 +47,7 @@ resource-pack-prompt=You'll need this pack to see the cards.
 Restart the server after editing `server.properties`.
 
 If you already use `server.properties` for another pack, the plugin can send this one instead. Put
-the same link and hash under `resource-pack` in `plugins/UNO/config.yml` and run `/uno reload`.
+the same link and hash under `resource-pack` in `plugins/LegallyNotUno/config.yml` and run `/uno reload`.
 
 Players can also just download the pack themselves and add it through
 **Options → Resource Packs**.
@@ -85,7 +85,7 @@ keeps playing.
 
 ## House rules
 
-Every group plays UNO a little differently, so the common variants are in `config.yml` under
+Every group plays a little differently, so the common variants are in `config.yml` under
 `rules:`. They're all **off** by default, which gives you the official rules.
 
 | Rule | What it does |
@@ -118,7 +118,7 @@ A few things worth knowing:
   dealt gets you a full refund.
 - Everything staked is saved to disk straight away. If the server crashes, players get their items
   and money back, and anyone who was offline gets theirs the next time they log in.
-- Every stake, payout and refund is written to `plugins/UNO/bets.log`, so you can check what
+- Every stake, payout and refund is written to `plugins/LegallyNotUno/bets.log`, so you can check what
   happened if someone says they were robbed.
 - If a bot wins, nobody loses anything. Everyone gets their stake back.
 - Shulker boxes and bundles can't be staked by default. You can change the blacklist in
@@ -147,7 +147,7 @@ table seen from above. Drop blocks into the nine top slots and the four seat slo
 stairs), then hit Save. You get your blocks back when the editor closes. `/uno give <name>` then
 hands out a table using your design.
 
-Themes are stored in `plugins/UNO/themes.yml` if you'd rather edit them by hand. Blocks from
+Themes are stored in `plugins/LegallyNotUno/themes.yml` if you'd rather edit them by hand. Blocks from
 ItemsAdder, Oraxen and Nexo work too. Write the custom block, a `|`, and a vanilla block to use if
 that plugin isn't installed:
 
@@ -177,19 +177,19 @@ Tables are made of real blocks, so they save with the world. Only admins can bre
 | `/uno info` | Admin | Show running games and pots |
 | `/uno end <player\|all>` | Admin | Force a game to end and refund any pot |
 | `/uno refund <player\|all>` | Admin | Refund a stuck pot |
-| `/uno reload` | Admin | Reload `config.yml` and `messages.yml` |
+| `/uno reload` | Admin | Reload `config.yml`, `messages.yml` and `themes.yml` |
 
 ### Permissions
 
 | Permission | Default | |
 |---|---|---|
-| `uno.play` | Everyone | Sit and play |
-| `uno.gamble` | Everyone | Place bets |
-| `uno.admin` | Op | Admin commands |
+| `legallynotuno.play` | Everyone | Sit and play |
+| `legallynotuno.gamble` | Everyone | Place bets |
+| `legallynotuno.admin` | Op | Admin commands |
 
 ## Configuration
 
-Everything is in `plugins/UNO/config.yml`, and each setting has a comment explaining it. The ones
+Everything is in `plugins/LegallyNotUno/config.yml`, and each setting has a comment explaining it. The ones
 you're most likely to want:
 
 - `game.turn-timeout-seconds`: how long a player can sit on their turn before they automatically
@@ -199,14 +199,14 @@ you're most likely to want:
 - `gambling.money.enabled`: allow or block money bets when Vault is installed.
 - `effects.sounds` / `effects.particles`: turn the effects off if you don't want them.
 
-All chat messages are in `plugins/UNO/messages.yml` if you want to reword or translate them.
+All chat messages are in `plugins/LegallyNotUno/messages.yml` if you want to reword or translate them.
 
 ## Building from source
 
 You need JDK 25 and Maven.
 
 ```bash
-mvn clean package    # builds target/uno-1.0.jar and runs the tests
+mvn clean package    # builds target/legallynotuno-1.0.jar and runs the tests
 ```
 
 Architecture notes for contributors are in [CLAUDE.md](CLAUDE.md).

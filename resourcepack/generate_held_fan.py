@@ -35,7 +35,7 @@ CARD_DIR = os.path.join(HERE, "assets/minecraft/textures/item/cards")
 MODELS = os.path.join(HERE, "assets/uno/models/item/held")
 ITEM = os.path.join(HERE, "assets/uno/items/held.json")
 HAND_MANAGER = os.path.join(
-    HERE, "..", "src", "main", "java", "com", "unoplugin", "hand", "HandManager.java")
+    HERE, "..", "src", "main", "java", "com", "legallynotuno", "hand", "HandManager.java")
 
 
 def java_constants():
