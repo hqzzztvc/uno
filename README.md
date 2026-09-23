@@ -1,355 +1,221 @@
-# UNO
+# Legally Not Uno
 
-A fully playable multiplayer UNO card game for **Paper 26.2** — a placeable table with stair seats
-in nine themes (or any you build yourself), a card fan held in your hand, card piles that sit on
-the table for everyone to see, and an optional "Let It Ride" mode where you wager items on a hand.
+A multiplayer card game of (legally not) UNO for Paper servers. You sit at a real table, hold your
+cards in a fan in first person, and play onto a pile that everyone at the table can see. Up to four
+players per table, with bots to fill empty seats if you're short.
 
-No mods. Tables are ordinary blocks; everything else is vanilla display entities plus a
-client-side resource pack.
+<!-- SCREENSHOT: a full table mid-game, four players seated, piles visible -->
 
 ---
 
 ## Requirements
 
-| | |
-|---|---|
-| Server | Paper **26.2** (Folia not supported) |
-| Java | **25** |
-| Client | The `Legally Not Uno Textures.zip` resource pack, installed manually |
+- Paper **26.2** (Folia isn't supported)
+- Java **25**
+- The **[Legally Not Uno Textures](https://modrinth.com/resourcepack/legally-not-uno-textures)**
+  resource pack on every player's client. Without it the cards show up as blank paper.
+- Optional: **Vault** plus an economy plugin, if you want players to bet money as well as items
 
-## Installing
+## Installation
 
-1. Drop `uno-1.0.jar` into your server's `plugins/` folder and start the server once.
-2. Build the resource pack and install it on each **client**:
+1. Put the plugin jar in your server's `plugins/` folder.
+2. Start the server once so it creates `plugins/UNO/`.
+3. Set up the resource pack (below).
+4. Give yourself a table with `/uno give lightcherry` and right-click the ground where you want it.
 
-   ```bash
-   cd resourcepack
-   zip -qr "../Legally Not Uno Textures.zip" pack.mcmeta pack.png assets -x '*.DS_Store'
-   ```
+### Resource pack
 
-   Copy `Legally Not Uno Textures.zip` into `.minecraft/resourcepacks/` and enable it in **Options → Resource Packs**.
+Download the pack from **[Modrinth](https://modrinth.com/resourcepack/legally-not-uno-textures)**.
+The easiest way to get it to players is to have the server send it when they join. Open
+`server.properties` and fill in these lines:
 
-   Or host the zip yourself and let the server offer it on join — set `resource-pack.url.link` (and
-   `sha1`, so clients cache it) in `config.yml`. The plugin never hosts the pack itself.
-
-> **Note:** without the pack, every card renders as a blank sheet of paper.
-
-## Playing
-
-Build a table, sit down, deal:
-
-```
-/uno give <theme>      # admin — hands you a placeable table item
-                       # right-click the ground with it to build the table
-                       # cherry | spruce | mangrove | darkoak | …, or your own
-/uno join              # stand next to a table and take the nearest free seat
-/uno leave             # get up (Shift does the same)
-/uno quit              # drop out of the hand you're in — others play on
-/uno stop              # end the hand at your table for everyone
-/uno start [bots]      # deal a hand to everyone seated at your table
+```properties
+resource-pack=https://cdn.modrinth.com/data/.../Legally%20Not%20Uno%20Textures.zip
+resource-pack-sha1=<the zip's SHA-1>
+require-resource-pack=false
+resource-pack-prompt=You'll need this pack to see the cards.
 ```
 
-You need at least 2 players; every table seats 4. Bots can fill the empty chairs.
+- For `resource-pack`, go to the pack's Modrinth page, open the version you want, right-click the
+  download button and copy the link. It has to be the direct file link.
+- `resource-pack-sha1` is optional but worth setting, otherwise players re-download the pack every
+  time they join. You can get the hash by downloading the zip and running
+  `certutil -hashfile "Legally Not Uno Textures.zip" SHA1` on Windows or
+  `sha1sum "Legally Not Uno Textures.zip"` on Linux/macOS.
+- Set `require-resource-pack=true` if you'd rather kick players who decline it.
 
-### Table themes
+Restart the server after editing `server.properties`.
 
-All nine are the same table — a 3×3 chequered top of logs with a stair pulled up to each side — in
-different blocks. They are **real blocks set into the world**, not display entities, so they save
-with the chunk and cost nothing to render. Edit any of them, or add your own, with
-`/uno theme create` or by hand in `plugins/UNO/themes.yml`.
+If you already use `server.properties` for another pack, the plugin can send this one instead. Put
+the same link and hash under `resource-pack` in `plugins/UNO/config.yml` and run `/uno reload`.
 
-Each is named for the wood it's made of, on a light/dark axis. Stripping is what that axis means:
-**stripped** cherry is pink on every face, while unstripped cherry keeps pink rings on top and
-dark bark down the sides — that dark frame is the bark, not a separate block.
+Players can also just download the pack themselves and add it through
+**Options → Resource Packs**.
 
-| Theme | Top | Seats |
-|---|---|---|
-| `lightcherry` | stripped cherry & stripped pale oak | cherry stairs |
-| `cherry` | cherry & pale oak (dark bark sides) | pale oak stairs |
-| `darkcherry` | cherry & pale oak (dark bark sides) | nether brick stairs |
-| `spruce` | stripped spruce & stripped oak | spruce stairs |
-| `darkspruce` | spruce & oak | dark oak stairs |
-| `darkoak` | dark oak & pale oak | deepslate tile stairs |
-| `lightmangrove` | stripped mangrove & stripped pale oak | mangrove stairs |
-| `mangrove` | stripped dark oak & stripped mangrove | dark oak stairs |
-| `darkmangrove` | dark oak & mangrove | dark oak stairs |
+## How to play
 
-`cherry` and `darkcherry` are the same top; the seats are the whole difference.
+Walk up to a table and type `/uno join` to sit down. You'll get two buttons in chat:
+
+- **[ READY ]** for a normal game. The hand deals as soon as everyone seated has clicked it.
+- **[ FOR STAKES ]** to play for items or money (see [Let It Ride](#let-it-ride)).
+
+Tables seat four and need at least two players. If you're on your own, `/uno start 3` deals you in
+against three bots.
+
+<!-- SCREENSHOT: first-person view of the card fan in hand -->
 
 ### Controls
 
-Your hand appears as a fan of cards held in your main hand. While it's up, the plugin owns your
-controls — you can't break or place blocks.
+While you're holding your cards, the plugin takes over your controls, so you can't break or place
+blocks until the hand ends.
 
 | Input | Action |
 |---|---|
-| **A** / **D**, or scroll wheel | Move the selection along the fan (hold to run along it) |
+| **A** / **D** or scroll wheel | Move along your hand |
 | **Left-click** or **Q** | Play the selected card |
 | **Right-click** or **F** | Draw a card |
 
-The selected card lifts out of the fan so you can see what you're about to play.
+The bossbar at the top shows the card in play, the current colour, whose turn it is and how many
+cards are left in the deck. When you play a wild, pick the colour from the buttons in chat.
 
-The bossbar shows the top card, the active colour, whose turn it is, the direction of play and how
-many cards are left in the deck. Playing a wild puts four clickable colours in chat, laid out like the
-card — red and blue on top, yellow and green below; if the turn timer runs out first, you get the
-colour you hold most of. As your hand grows, the fan compresses so every card stays visible.
+Standing up (Shift or `/uno leave`) takes you out of the hand. So does `/uno quit`. Everyone else
+keeps playing.
 
-Standard rules: 108-card deck, 7 cards each, match colour / number / symbol, Skip, Reverse (a Skip in
-a 2-player game), +2, Wild and Wild +4. Empty your hand to win. If you disconnect mid-hand, you drop
-out and the others play on.
-
-## Gambling — "Let It Ride"
-
-Wager real items on a hand. **Winner takes the whole pot.**
-
-```
-/gamble            # open (or join) the ante at your table
-                   # then drop items onto the table to stake them
-/gamble ready      # lock your stake in — the hand deals when everyone is ready
-/gamble pot        # see what's on the line and who's in
-/gamble out        # pull out and take your stake back (before the deal only)
-/gamble go         # host: start now, refunding anyone still deciding
-/gamble cancel     # host: call it off, refund everyone
-```
-
-Win the hand and you choose: **cash out**, or **let it ride** — leave the whole pot in for another
-hand and make the table match it to challenge you. No takers within the challenge window and you walk
-away with it.
-
-The rules that give the mode its teeth:
-
-- **Quitting mid-hand is forfeiting.** Your stake stays in the pot for whoever wins — otherwise
-  disconnecting would be a free undo on a losing bet. Leaving during the ante, before cards are
-  dealt, refunds you normally.
-- **Nothing is ever held only in memory.** Staked items are written to `plugins/UNO/escrow/` the
-  instant they leave your inventory, so a crash, a `kill -9` or a power cut still returns them.
-  Anything owed to an offline player is handed over on their next login.
-- **Every movement is logged.** Stakes, payouts, refunds and forfeits are appended to
-  `plugins/UNO/bets.log` with timestamps and UUIDs, so "he took my diamonds" has an answer.
-- The pot on the table is a *display*, not dropped items — it can't despawn, be hoovered by a hopper,
-  or be grabbed by someone walking past.
-- Bots never collect. A bot win is a push and everyone is refunded.
-- UNO's own cards and table items can't be put in a pot.
-
-## Table themes
-
-What a table is made of is **data**, not code. Every look is a "theme" in
-`plugins/UNO/themes.yml`: a 3×3 grid of blocks for the top, plus a block for each of the four
-seats. The nine that ship are written into that file on first run and are not special — edit them,
-or add your own.
-
-Build one in game rather than by hand:
-
-```
-/uno theme create marble    # opens a 3×3 grid with a seat slot on each side
-                            # drop blocks in, hit Save
-/uno give marble            # hand out a table wearing it
-```
-
-Blocks placed in the editor are always given back when it closes — designing a theme costs
-nothing.
-
-Written by hand, a theme looks like this:
-
-```yaml
-themes:
-  marble:
-    name: Marble Table
-    # First row is the FAR side of the table, first column is the LEFT.
-    # The pattern turns to match the way the table is placed.
-    grid:
-      - ["minecraft:quartz_block", "minecraft:quartz_pillar[axis=y]", "minecraft:quartz_block"]
-      - ["minecraft:quartz_pillar[axis=y]", "minecraft:sea_lantern", "minecraft:quartz_pillar[axis=y]"]
-      - ["minecraft:quartz_block", "minecraft:quartz_pillar[axis=y]", "minecraft:quartz_block"]
-    seats:
-      near: "minecraft:quartz_stairs"
-      far: "minecraft:quartz_stairs"
-      left: "minecraft:quartz_stairs"
-      right: "minecraft:quartz_stairs"
-```
-
-### Custom blocks
-
-A theme may name a block from **ItemsAdder, Oraxen or Nexo**, with a vanilla block after a pipe
-for servers that don't run that plugin:
-
-```yaml
-      - ["itemsadder:marble_pillar|minecraft:quartz_pillar", "nexo:felt|minecraft:green_wool", ...]
-```
-
-Those plugins are soft dependencies read reflectively, so UNO builds and runs identically without
-any of them installed. **Always give a custom id a fallback** — without one, a server missing that
-plugin gets a plain default block in that cell.
-
+<!-- SCREENSHOT: the discard pile and draw pile on the table -->
 
 ## House rules
 
-UNO has no single agreed rulebook, so the popular variants are toggles in `config.yml` under
-`rules:`. **All of them are off by default** — the game plays exactly by the official rules
-until you turn something on. They are read when a hand is dealt, so `/uno reload` applies to
-the next hand rather than the one in progress.
+Every group plays UNO a little differently, so the common variants are in `config.yml` under
+`rules:`. They're all **off** by default, which gives you the official rules.
 
-| Rule | Key | What it does |
-|---|---|---|
-| Stacking | `rules.stacking.enabled` | Answer a +2 with your own instead of drawing. The pile accumulates and lands on the first player who can't or won't add to it. Sub-toggles: `draw4-on-draw2`, `draw2-on-draw4` |
-| Same-rank multi-play | `rules.multi-play.enabled` | Lay several cards of the same rank in one turn. Every card still takes effect: two Skips skip two players. `max-cards: 0` for no limit |
-| Jump-in | `rules.jump-in` | Holding the exact card that's showing (same colour *and* rank) lets you play it out of turn, and play jumps to you. Just left-click it in your fan |
-| Seven-O | `rules.seven-o` | A 7 swaps your hand with a player you pick; a 0 moves every hand one seat around |
-| Draw to match | `rules.draw-to-match` | Keep drawing until something is playable — and keep the turn, so you can play it |
-| +4 challenge | `rules.challenge-draw4` | The official rule. A +4 is only legal if its player had nothing matching the colour showing. Catch a bluff and they draw 4; challenge an honest one and you draw 6 |
+| Rule | What it does |
+|---|---|
+| `stacking` | Answer a +2 with another +2 instead of drawing. The penalty keeps growing until someone can't add to it. |
+| `multi-play` | Play several cards of the same number or symbol in one turn. |
+| `jump-in` | If you're holding the exact card on top of the pile, play it out of turn. |
+| `seven-o` | A 7 swaps hands with a player you choose. A 0 passes every hand along one seat. |
+| `draw-to-match` | Keep drawing until you get a card you can play. |
+| `challenge-draw4` | Challenge a Wild +4 you think was played illegally. Guess right and they draw 4, guess wrong and you draw 6. |
+| `uno-callout` | Players have to call UNO themselves, and anyone can catch a player who forgets. |
 
-### Calling UNO
+Rule changes apply from the next hand dealt after `/uno reload`.
 
-By default the plugin calls UNO for you. Turn on `rules.uno-callout.enabled` and players have
-to call it themselves:
+## Let It Ride
+
+Any table can be played for stakes. Click **[ FOR STAKES ]** when you sit down, then put something
+in the pot: drop items onto the table, or type `/gamble <amount>` to bet money if the server has
+Vault set up. Click ready once you're happy with your stake. The pot sits on the table while
+everyone antes up.
+
+Whoever wins the hand takes the whole pot. They can cash out, or let it ride and leave it on the
+table for another hand. Anyone who wants to challenge has to match it.
+
+<!-- SCREENSHOT: a pot of items sitting on the table -->
+
+A few things worth knowing:
+
+- Leaving during a hand counts as a loss. Your stake stays in the pot. Leaving before the cards are
+  dealt gets you a full refund.
+- Everything staked is saved to disk straight away. If the server crashes, players get their items
+  and money back, and anyone who was offline gets theirs the next time they log in.
+- Every stake, payout and refund is written to `plugins/UNO/bets.log`, so you can check what
+  happened if someone says they were robbed.
+- If a bot wins, nobody loses anything. Everyone gets their stake back.
+- Shulker boxes and bundles can't be staked by default. You can change the blacklist in
+  `config.yml`.
+
+| Command | |
+|---|---|
+| `/gamble <amount>` | Bet money |
+| `/gamble ready` | Lock in your stake |
+| `/gamble pot` | See what's in the pot and who's playing |
+| `/gamble out` | Take your stake back (before the deal only) |
+| `/gamble go` | Deal now and refund anyone who hasn't locked in (whoever opened the bet) |
+| `/gamble cancel` | Call it off and refund everyone (whoever opened the bet) |
+
+## Table themes
+
+There are nine tables to choose from, all built from wood:
+
+`lightcherry`, `cherry`, `darkcherry`, `spruce`, `darkspruce`, `darkoak`, `lightmangrove`,
+`mangrove`, `darkmangrove`
+
+<!-- SCREENSHOT: a row of tables in different themes -->
+
+You can also design your own in game. `/uno theme create <name>` opens a grid laid out like the
+table seen from above. Drop blocks into the nine top slots and the four seat slots (seats should be
+stairs), then hit Save. You get your blocks back when the editor closes. `/uno give <name>` then
+hands out a table using your design.
+
+Themes are stored in `plugins/UNO/themes.yml` if you'd rather edit them by hand. Blocks from
+ItemsAdder, Oraxen and Nexo work too. Write the custom block, a `|`, and a vanilla block to use if
+that plugin isn't installed:
 
 ```yaml
-rules:
-  uno-callout:
-    enabled: true
-    window-seconds: 5          # how long the window stays open
-    penalty: 2                 # cards drawn by a player who gets caught
-    false-callout-penalty: 2   # cards drawn for accusing somebody who was safe
+- ["itemsadder:marble_pillar|minecraft:quartz_pillar", ...]
 ```
 
-The moment a hand drops to one card, that player gets a clickable **[ CALL UNO! ]** and
-everyone else gets **[ CALL THEM OUT ]**. Click first and you win the exchange. Ride out the
-window without being caught and you're safe until you pick cards up again. `/uno uno` and
-`/uno callout <player>` do the same thing if you'd rather type.
-
-Bots call their own UNO at a random moment inside the window, so catching one is a genuine
-race rather than a coin flip.
-
+Tables are made of real blocks, so they save with the world. Only admins can break them.
 
 ## Commands
 
-All subcommands tab-complete; admin ones are hidden from players who can't use them.
-
-| Command | Permission | |
+| Command | Who | |
 |---|---|---|
-| `/uno help` | `uno.play` | Command list, filtered by what you can run |
-| `/uno join` | `uno.play` | Sit at the nearest table (alias: `/uno sit`) |
-| `/uno leave` | `uno.play` | Get up (alias: `/uno stand`; Shift does the same) |
-| `/uno start [bots]` | `uno.play` | Deal a hand to everyone seated at your table |
-| `/uno quit` | `uno.play` | Drop out of your hand; others play on (alias: `/uno forfeit`) |
-| `/uno stop` | `uno.play` | End the hand at your table (refused while a pot is riding) |
-| `/uno uno` | `uno.play` | Call UNO when you're down to one card (usually clicked, not typed) |
-| `/uno callout <player>` | `uno.play` | Catch a player on one card who never called |
-| `/uno version` | `uno.play` | Plugin version |
-| `/gamble …` | `uno.gamble` | Wagering — see above (aliases: `/bet`, `/ante`, `/letitride`) |
-| `/uno give <theme>` | `uno.admin` | A placeable table item; right-click the ground with it. Every table plays casual or for stakes |
-| `/uno theme <list\|create\|edit\|delete> [id]` | `uno.admin` | Design the blocks a table is built from, in a 3×3 GUI |
-| `/uno remove` | `uno.admin` | Remove the nearest table within 5 blocks (refused mid-hand) |
-| `/uno list` | `uno.admin` | Every placed table: id, world, coordinates, occupancy |
-| `/uno info` | `uno.admin` | Running hands and open pots |
-| `/uno tp <id>` | `uno.admin` | Teleport to a table |
-| `/uno end <player\|all>` | `uno.admin` | Force a stuck hand to finish (any pot is refunded) |
-| `/uno refund <player\|all>` | `uno.admin` | Hand a stuck pot back to its stakers |
-| `/uno reload` | `uno.admin` | Re-read `config.yml` and `messages.yml` |
-| `/uno play [bots]` | `uno.admin` | Solo test game against bots, no table needed |
+| `/uno join` | Everyone | Sit at the nearest table |
+| `/uno leave` | Everyone | Stand up |
+| `/uno ready` | Everyone | Ready up (same as the button) |
+| `/uno start [bots]` | Everyone | Deal now, optionally adding bots |
+| `/uno quit` | Everyone | Drop out of your hand |
+| `/uno stop` | Everyone | End the hand at your table (not allowed while there's a pot) |
+| `/uno help` | Everyone | List the commands you can use |
+| `/gamble` | Everyone | Betting, see [Let It Ride](#let-it-ride) |
+| `/uno give <theme>` | Admin | Get a placeable table |
+| `/uno theme <list\|create\|edit\|delete>` | Admin | Manage table themes |
+| `/uno remove` | Admin | Remove the nearest table |
+| `/uno list` | Admin | List every table |
+| `/uno tp <id>` | Admin | Teleport to a table |
+| `/uno info` | Admin | Show running games and pots |
+| `/uno end <player\|all>` | Admin | Force a game to end and refund any pot |
+| `/uno refund <player\|all>` | Admin | Refund a stuck pot |
+| `/uno reload` | Admin | Reload `config.yml` and `messages.yml` |
 
-With `debug: true` in `config.yml`, five throwaway development commands also become available:
-`/uno fan`, `/uno fanclear`, `/uno hand`, `/uno testcards`, `/uno cleartest`. They spawn per-tick
-display entities and are not meant for a live server.
+### Permissions
 
-Defaults: `uno.play` and `uno.gamble` are on for everyone, `uno.admin` is op-only.
+| Permission | Default | |
+|---|---|---|
+| `uno.play` | Everyone | Sit and play |
+| `uno.gamble` | Everyone | Place bets |
+| `uno.admin` | Op | Admin commands |
 
 ## Configuration
 
-`plugins/UNO/config.yml` — every key in it is read by the plugin; if setting one changes nothing,
-that's a bug. `/uno reload` re-reads it live. Highlights:
+Everything is in `plugins/UNO/config.yml`, and each setting has a comment explaining it. The ones
+you're most likely to want:
 
-```yaml
-game:
-  starting-hand-size: 7        # clamped so the deal can't empty the deck
-  turn-timeout-seconds: 60     # idle player's turn is played for them (0 = never)
-tables:
-  max-per-world: 0             # cap tables per world (0 = unlimited)
-gambling:
-  ante-seconds: 300            # ante expires and refunds after this (0 = never)
-  audit-log: true              # append every item movement to bets.log
-  limits:
-    max-pot-items: 0           # cap the pot (0 = unlimited)
-    min-ante-items: 1          # minimum buy-in
-    block-containers: true     # no staking a shulker box full of netherite
-    blacklist: [SHULKER_BOX, BUNDLE]
-  ride:
-    window-seconds: 20         # winner's decision window (no answer = cash out)
-    challenge-seconds: 90      # how long the table has to match a riding pot
-effects:
-  sounds: true                 # card snaps, turn chimes, the UNO call
-  particles: true              # coloured card dust, fireworks over a winner
-  volume: 1.0                  # multiplier on every sound (0-2)
-```
+- `game.turn-timeout-seconds`: how long a player can sit on their turn before they automatically
+  draw and pass (default 60).
+- `game.starting-hand-size`: cards dealt to each player (default 7).
+- `gambling.enabled`: turn betting off entirely.
+- `gambling.money.enabled`: allow or block money bets when Vault is installed.
+- `effects.sounds` / `effects.particles`: turn the effects off if you don't want them.
 
-Player-facing text lives in `plugins/UNO/messages.yml` (MiniMessage formatting) — reword, restyle
-or translate anything. Keys you leave out fall back to the copy shipped in the jar.
-
-State the plugin persists, in `plugins/UNO/`:
-
-- `tables.yml` — placed tables (position, facing, type). Tables in worlds that aren't loaded yet are
-  preserved verbatim, not dropped.
-- `escrow/<uuid>.yml` — items held for staked or unfinished bets, one file per owner.
-- `bets.log` — append-only audit trail of every stake, payout, refund and forfeit.
+All chat messages are in `plugins/UNO/messages.yml` if you want to reword or translate them.
 
 ## Building from source
 
-```bash
-mvn clean package       # -> target/uno-1.0.jar  (runs the tests)
-mvn test                # rules-layer tests only
-```
-
-Needs JDK 25 and Maven. `paper-api` is a `provided` dependency, supplied by the server at runtime.
-
-`Card`, `Deck` and `UnoGame` are pure Java with no Bukkit imports, and are covered by JUnit tests in
-`src/test/java` — including the invariant that a game always holds exactly one 108-card deck, wherever
-the cards happen to be. Everything else needs a running Paper 26.2 server to verify.
-
-### Repository layout
-
-```
-src/main/java/com/unoplugin/
-  UnoPlugin.java        plugin entry point, manager wiring
-  command/              UnoCommand + GambleCommand (routing, permissions, tab completion)
-  game/                 UnoGame (pure rules), Card, Deck, GameManager, PileRenderer
-  hand/HandManager      the held 3D card fan + all player input while it's up
-  table/                UnoTable geometry + variant palettes, TableManager (placement, seats, visuals)
-  bet/                  BetManager, BetSession, EscrowStore, PotRenderer, BetLog
-  util/                 Settings (config), Messages (messages.yml), Fx (sound + particles),
-                        NameCache, ResourcePackSender
-  debug/CardTester      throwaway visual test helpers, gated behind `debug: true`
-
-src/test/java/com/unoplugin/       JUnit tests: the rules layer, plus the fan's density tiers
-
-uno_json/                               the card geometry (hand-authored Blockbench exports)
-
-resourcepack/
-  assets/minecraft/textures/item/cards/   the card art (hand-authored PNGs)
-  assets/uno/                             item + model definitions (all generated)
-  generate_card_models.py                 upright / flat / face-down / deck models + item defs
-  generate_held_fan.py                    the composite held-fan models (~6800 files)
-```
-
-Two things are authored by hand: the card **art** in `assets/minecraft/textures/item/cards/`, and
-the card **geometry** in `uno_json/` — one Blockbench export per card, a rounded-corner slab with
-the face on one side and `back.png` on the other, plus `deck_10/50/100` for the draw pile.
-Everything under `assets/uno/` is generated from those two by the scripts above and shouldn't be
-edited directly. Run `generate_card_models.py` first; the fan parents the models it writes.
-
-`generate_held_fan.py` reads its slot count and fan density tiers straight out of
-`HandManager.java`, so the two can't drift apart — change them in the Java and re-run the generator.
-
-## Contributing
-
-Two developers work on this repo, so **pull before you start and push when you finish**:
+You need JDK 25 and Maven.
 
 ```bash
-git pull --rebase origin main
+mvn clean package    # builds target/uno-1.0.jar and runs the tests
 ```
 
-See [CLAUDE.md](CLAUDE.md) for the architecture notes, invariants and version-migration TODOs that
-matter when changing the code.
+Architecture notes for contributors are in [CLAUDE.md](CLAUDE.md).
+
+## Disclaimer
+
+Legally Not Uno is a fan project. It isn't affiliated with, endorsed by or sponsored by Mattel.
+UNO is a trademark of Mattel, Inc.
 
 ## License
 
-GNU General Public License v3.0 — see [LICENSE](LICENSE).
+GNU General Public License v3.0. See [LICENSE](LICENSE).
