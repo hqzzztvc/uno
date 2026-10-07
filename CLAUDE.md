@@ -42,13 +42,13 @@ The trademark disclaimers in the READMEs name UNO because a disclaimer has to.
 
 Two halves that must stay in sync:
 
-- `src/` — the Java plugin (Maven, Java 25, Paper 26.2 API).
+- `src/` — the Java plugin (Maven, Java 21, Paper 1.21.4 API; one jar for Paper 1.21.4 to 26.3).
 - `resourcepack/` — the client-side resource pack that supplies every model the plugin references by
   `NamespacedKey("uno", …)`. Most of it is **generated**, not hand-written.
 
 ## Build & dev loop
 
-Requires **JDK 25** (Paper 26.2 is class-file v69) and Maven. Both are installed via scoop
+Requires **JDK 21 or newer** (the build targets `--release 21`, class-file v65) and Maven. Both are installed via scoop
 (`temurin25-jdk`, `maven`); scoop puts the JDK on PATH directly rather than shimming it, so if
 `java` isn't found, source this:
 
@@ -79,10 +79,10 @@ wherever they are. Both historical card-accounting bugs — `start()` discarding
 flipped past, and `Deck.draw()` rebuilding itself while players held cards — show up as that count
 drifting. Add to those tests before touching the rules.
 
-There is no linter. Everything outside the rules layer needs a Paper 26.2 server to verify:
+There is no linter. Everything outside the rules layer needs a Paper server to verify (1.21.4 and 26.3 are the two ends of the supported range):
 
 ```bash
-cp target/legallynotuno-1.0.jar server/plugins/
+cp target/legallynotuno-1.1.jar server/plugins/
 # Builds from before the rename were uno-*.jar with the data folder plugins/UNO/. Delete the old
 # jar (both would load and fight over /uno) and rename the folder to plugins/LegallyNotUno/.
 cd resourcepack && zip -qr "../Legally Not Uno Textures.zip" pack.mcmeta pack.png assets -x '*.DS_Store'
@@ -733,9 +733,32 @@ their own cards. `isPluginItem()` is the second line of defence.
 
 ## Paper version notes
 
-`pom.xml` targets `paper-api 26.2.build.111-stable` and `plugin.yml` declares `api-version: '26.2'`
-to match — an older declaration makes Paper apply legacy-material compatibility this doesn't want.
-Bump both together.
+**One jar runs on Paper 1.21.4 to 26.3.** Three settings decide that, and they move together:
+`maven.compiler.release` **21**, `paper.version` **1.21.4-R0.1-SNAPSHOT** (both in `pom.xml`) and
+`api-version: '1.21.4'` in `plugin.yml`. 1.0 was built for 26.2 alone; 1.1 widened it without a
+single source change.
 
-There is a pending 26.3 migration marked by `TODO(26.3)` in `TableManager`: swap `SEAT_CUSHION` from
-`Material.RED_WOOL` to the real `Material.CUSHION` and bump the pom, once that drop ships.
+- **The plugin is compiled against the OLDEST API it supports, never the newest.** Built against
+  26.2 or later, `BetManager`'s pot label links `TextComponent.Builder.build()` returning
+  `Component` (Adventure 5), which does not exist on 26.1.2 and older: `NoSuchMethodError`, and
+  only on a wagered hand, so a boot test doesn't show it. Built against 1.21.4 the call links the
+  old `BuildableComponent` signature, which Adventure 5 still carries as a bridge. That one call
+  is the only bytecode difference between the two builds.
+- **Java 21, because Paper 1.21.x runs on it.** The sources use nothing newer. A 26.x server runs
+  the same jar on its Java 25.
+- **`api-version` is the oldest server, not the newest.** Paper refuses a plugin declaring a
+  version newer than itself. `1.21.4` is not old enough to switch on the pre-1.13
+  legacy-material rewriting.
+- **1.21.4 is a hard floor, set by the held fan:** string `custom_model_data` and
+  composite/select item model definitions both arrived there, on the server and in the client.
+  Going lower means a second hand renderer and a second pack layout, not a build setting.
+- **Don't use an API newer than 1.21.4 without a fallback** — it will compile only if
+  `paper.version` is raised, and raising it drops every server below it.
+- The pack's `pack.mcmeta` declares `pack_format: 46` with `supported_formats: [46, 64]` and
+  `min_format`/`max_format` 46–120. Keep `pack_format` inside `supported_formats`, or 1.21.4–1.21.8
+  clients throw the range away and list the pack as made for a newer version; and keep
+  `supported_formats`, or 26.x rejects the file.
+
+Released builds are smoke-tested on both ends, Paper 1.21.4 and 26.3. The `TODO(26.3)` cushion
+migration this section used to describe no longer exists: `SEAT_CUSHION` went when tables became
+real blocks, and a seat is now the theme's own stair block.

@@ -3,9 +3,10 @@ name: LegallyNotUno
 # The update checker compares it with the newest version number on Modrinth.
 version: '${project.version}'
 main: com.legallynotuno.LegallyNotUno
-# Matches the paper-api the plugin is built against (see pom.xml). Declaring an older
-# version makes Paper apply legacy-material compatibility we neither need nor want.
-api-version: '26.2'
+# The OLDEST server the jar runs on, and the paper-api it is built against (see pom.xml):
+# Paper refuses a plugin that declares a newer version than its own. One jar covers
+# 1.21.4 to 26.3; the held fan needs 1.21.4, so this cannot go lower.
+api-version: '1.21.4'
 description: Legally Not Uno — a multiplayer card game with placeable tables, a hand of cards held in first person, and optional stakes.
 author: ankur
 website: https://modrinth.com/project/legallynotuno

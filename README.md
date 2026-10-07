@@ -10,8 +10,8 @@ players per table, with bots to fill empty seats if you're short.
 
 ## Requirements
 
-- Paper **26.2** (Folia isn't supported)
-- Java **25**
+- Paper **1.21.4 to 26.3** (Folia isn't supported). One jar covers the whole range.
+- Java **21** or newer, which is whatever your server already runs on: 21 for 1.21.x, 25 for 26.x
 - The **[Legally Not Uno Textures](https://modrinth.com/resourcepack/legally-not-uno-textures)**
   resource pack on every player's client. Without it the cards show up as blank paper.
 - Optional: **Vault** plus an economy plugin, if you want players to bet money as well as items
@@ -203,10 +203,10 @@ All chat messages are in `plugins/LegallyNotUno/messages.yml` if you want to rew
 
 ## Building from source
 
-You need JDK 25 and Maven.
+You need JDK 21 or newer and Maven.
 
 ```bash
-mvn clean package    # builds target/legallynotuno-1.0.jar and runs the tests
+mvn clean package    # builds target/legallynotuno-1.1.jar and runs the tests
 ```
 
 Architecture notes for contributors are in [CLAUDE.md](CLAUDE.md).

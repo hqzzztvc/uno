@@ -62,8 +62,8 @@ Full setup instructions, commands and config options are on the
 
 ## Requirements
 
-- Paper 26.2
-- Java 25
+- Paper 1.21.4 to 26.3 (one jar for all of them)
+- Java 21 or newer: 21 for 1.21.x, 25 for 26.x
 - Vault and an economy plugin, only if you want money bets
 
 ---

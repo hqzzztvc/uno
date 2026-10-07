@@ -26,7 +26,7 @@ pack is what lets you see it: the cards in your hand, the pile you play onto and
 
 | | |
 |---|---|
-| Minecraft | Java Edition **26.2** (pack format 88) |
+| Minecraft | Java Edition **1.21.4 to 26.3** |
 | Server | Must be running the Legally Not Uno plugin |
 | Replaces vanilla textures? | **No.** Everything in the pack is new, so it works alongside any other pack, in any order |
 | Mods | None needed |

@@ -6,15 +6,19 @@
 
     <groupId>com.legallynotuno</groupId>
     <artifactId>legallynotuno</artifactId>
-    <version>1.0</version>
+    <version>1.1</version>
     <packaging>jar</packaging>
 
     <name>Legally Not Uno</name>
-    <description>Legally Not Uno: a fully playable multiplayer card game for Paper 26.2</description>
+    <description>Legally Not Uno: a fully playable multiplayer card game for Paper 1.21.4 to 26.3</description>
 
     <properties>
-        <java.version>25</java.version>
-        <maven.compiler.release>25</maven.compiler.release>
+        <!-- One jar for Paper 1.21.4 to 26.3. These two and api-version in plugin.yml are what
+             set the oldest server it runs on; see "Paper version notes" in CLAUDE.md before
+             raising any of them. -->
+        <java.version>21</java.version>
+        <maven.compiler.release>21</maven.compiler.release>
+        <paper.version>1.21.4-R0.1-SNAPSHOT</paper.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
@@ -26,13 +30,16 @@
     </repositories>
 
     <dependencies>
-        <!-- Paper 26.2 API (Java 25 / class-file v69). The 26.3 "Cushion drop" isn't
-             published yet; bump the version below + flip SEAT_CUSHION when it ships.
+        <!-- The OLDEST Paper API the plugin supports, on purpose, and not the newest. A jar
+             compiled against 26.2+ links Adventure 5's TextComponent.Builder.build() and dies
+             with NoSuchMethodError on every older server the first time a pot is shown; a jar
+             compiled against 1.21.4 runs on all of them. Java 21 / class-file v65 for the same
+             reason: Paper 1.21.x runs on Java 21.
              "provided" = supplied by the server at runtime, not bundled. -->
         <dependency>
             <groupId>io.papermc.paper</groupId>
             <artifactId>paper-api</artifactId>
-            <version>26.2.build.111-stable</version>
+            <version>${paper.version}</version>
             <scope>provided</scope>
         </dependency>
 
@@ -75,7 +82,7 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.13.0</version>
                 <configuration>
-                    <release>25</release>
+                    <release>${maven.compiler.release}</release>
                 </configuration>
             </plugin>
             <plugin>
